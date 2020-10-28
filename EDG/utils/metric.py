@@ -23,7 +23,6 @@ from six.moves import urllib
 import json
 import os
 
-
 # from utils.nlp import normalize
 
 def wer(r, h):
@@ -98,23 +97,25 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
     os.chmod(multi_bleu_path, 0o755)
 
     # Dump hypotheses and references to tempfiles
-    hypothesis_file = tempfile.NamedTemporaryFile()
+    hypothesis_file = tempfile.NamedTemporaryFile(mode='wb',delete=False)
     hypothesis_file.write("\n".join(hypotheses).encode("utf-8"))
     hypothesis_file.write(b"\n")
     hypothesis_file.flush()
-    reference_file = tempfile.NamedTemporaryFile()
+    reference_file = tempfile.NamedTemporaryFile(mode='wb',delete=False)
     reference_file.write("\n".join(references).encode("utf-8"))
     reference_file.write(b"\n")
     reference_file.flush()
 
     # Calculate BLEU using multi-bleu script
-    with open(hypothesis_file.name, "r") as read_pred:
-        bleu_cmd = [multi_bleu_path]
+    with open(hypothesis_file.name, "rb") as read_pred:
+
+        bleu_cmd = ['perl']
+        bleu_cmd += [multi_bleu_path]
         if lowercase:
             bleu_cmd += ["-lc"]
         bleu_cmd += [reference_file.name]
         try:
-            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
+            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT, shell=True)
             bleu_out = bleu_out.decode("utf-8")
             bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
             bleu_score = float(bleu_score)
