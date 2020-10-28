@@ -1,0 +1,1 @@
+python main.py --model cvae --label_smoothing --noam --emb_dim 300 --hidden_dim 300 --hop 2 --heads 2 --cuda --pretrain_emb --save_path save/cvae/
