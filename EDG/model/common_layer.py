@@ -7,10 +7,7 @@ import os
 from utils import config
 from utils.metric import moses_multi_bleu
 
-if (config.model == 'trs'):
-    from utils.beam_omt import Translator
-# elif (config.model == 'experts'):
-#     from utils.beam_omt_experts import Translator
+from utils.beam_omt import Translator
 import pprint
 from tqdm import tqdm
 
@@ -23,14 +20,12 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 np.random.seed(0)
 
-
 class EncoderLayer(nn.Module):
     """
     Represents one Encoder layer of the Transformer Encoder
     Refer Fig. 1 in https://arxiv.org/pdf/1706.03762.pdf
     NOTE: The layer normalization step has been moved to the input as per latest version of T2T
     """
-
     def __init__(self, hidden_size, total_key_depth, total_value_depth, filter_size, num_heads,
                  bias_mask=None, layer_dropout=0.0, attention_dropout=0.0, relu_dropout=0.0):
         """
@@ -58,7 +53,6 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(layer_dropout)
         self.layer_norm_mha = LayerNorm(hidden_size)
         self.layer_norm_ffn = LayerNorm(hidden_size)
-        # self.layer_norm_end = LayerNorm(hidden_size)
 
     def forward(self, inputs, mask=None):
         x = inputs
@@ -68,7 +62,7 @@ class EncoderLayer(nn.Module):
 
         # Multi-head attention
         y, _ = self.multi_head_attention(x_norm, x_norm, x_norm, mask)
-
+        # y: (batch_size, seq_length, hidden_size)
         # Dropout and residual
         x = self.dropout(x + y)
 
@@ -81,7 +75,6 @@ class EncoderLayer(nn.Module):
         # Dropout and residual
         y = self.dropout(x + y)
 
-        # y = self.layer_norm_end(y)
         return y
 
 class DecoderLayer(nn.Module):
@@ -353,9 +346,9 @@ class MultiHeadAttention(nn.Module):
         values = self.value_linear(values)
 
         # Split into multiple heads
-        queries = self._split_heads(queries)
-        keys = self._split_heads(keys)
-        values = self._split_heads(values)
+        queries = self._split_heads(queries) # (batch_size, num_heads, seq_length, d)
+        keys = self._split_heads(keys) # (batch_size, num_heads, seq_length, d)
+        values = self._split_heads(values) # (batch_size, num_heads, seq_length, d)
 
         # Scale queries
         queries *= self.query_scale
@@ -369,10 +362,10 @@ class MultiHeadAttention(nn.Module):
             logits = logits.masked_fill_(mask, -1e18)
 
         ## attention weights
-        attetion_weights = logits.sum(dim=1) / self.num_heads
+        attetion_weights = logits.sum(dim=1) / self.num_heads # (batch_size, seq_length, seq_length)
 
         # Convert to probabilites
-        weights = nn.functional.softmax(logits, dim=-1)
+        weights = nn.functional.softmax(logits, dim=-1) # (batch_size, num_heads, seq_length, seq_length)
 
         # Dropout
         weights = self.dropout(weights)
@@ -397,7 +390,6 @@ class Conv(nn.Module):
     Convenience class that does padding and convolution for inputs in the format
     [batch_size, sequence length, hidden size]
     """
-
     def __init__(self, input_size, output_size, kernel_size, pad_type):
         """
         Parameters:
@@ -422,7 +414,6 @@ class PositionwiseFeedForward(nn.Module):
     """
     Does a Linear + RELU + Linear on each of the timesteps
     """
-
     def __init__(self, input_depth, filter_size, output_depth, layer_config='ll', padding='left', dropout=0.0):
         """
         Parameters:
@@ -502,7 +493,7 @@ def _gen_timing_signal(length, channels, min_timescale=1.0, max_timescale=1.0e4)
     # shapes: (length, 1); (1, channels // 2) --> (length, channels // 2)
 
     signal = np.concatenate([np.sin(scaled_time), np.cos(scaled_time)], axis=1)
-    # shape: (length, channels // 2)
+    # shape: (length, 2 * channels // 2)
     signal = np.pad(signal, [[0, 0], [0, channels % 2]], 'constant', constant_values=[0.0, 0.0])
     # shape: (length, channels)
     signal = signal.reshape([1, length, channels])
@@ -580,7 +571,7 @@ def gen_embeddings(vocab):
     if config.emb_file is not None:
         print('Loading embedding file: %s' % config.emb_file)
         pre_trained = 0
-        for line in open(config.emb_file).readlines():
+        for line in open(config.emb_file, 'r', encoding='UTF8').readlines():
             sp = line.split()
             if (len(sp) == config.emb_dim + 1):
                 if sp[0] in vocab.word2index:
@@ -676,10 +667,17 @@ def get_attn_key_pad_mask(seq_k, seq_q):
 def get_input_from_batch(batch):
     enc_batch = batch["input_batch"]
     enc_lens = batch["input_lengths"]
+    enc_causeprob = batch["input_causeprob"]
+    enc_causepos = batch["input_causepos"]
+    cause_batch = batch["cause_batch"]
+    cause_lens = batch["cause_lengths"]
     batch_size, max_enc_len = enc_batch.size()
+    _, max_cause_len = cause_batch.size()
     assert len(enc_lens) == batch_size
+    assert len(cause_lens) == batch_size
 
     enc_padding_mask = sequence_mask(enc_lens, max_len=max_enc_len).float()
+    cause_padding_mask = sequence_mask(cause_lens, max_len=max_cause_len).float()
 
     extra_zeros = None
     enc_batch_extend_vocab = None
@@ -698,6 +696,10 @@ def get_input_from_batch(batch):
 
     if config.USE_CUDA:
         enc_padding_mask = enc_padding_mask.cuda()
+        enc_causeprob = enc_causeprob.cuda()
+        enc_causepos = enc_causepos.cuda()
+
+
         if enc_batch_extend_vocab is not None:
             enc_batch_extend_vocab = enc_batch_extend_vocab.cuda()
         if extra_zeros is not None:
@@ -707,7 +709,9 @@ def get_input_from_batch(batch):
         if coverage is not None:
             coverage = coverage.cuda()
 
-    return enc_batch, enc_padding_mask, enc_lens, enc_batch_extend_vocab, extra_zeros, c_t_1, coverage
+    return enc_batch, enc_causeprob, enc_causepos, enc_padding_mask, enc_lens, \
+           cause_batch, cause_padding_mask, cause_lens, \
+           enc_batch_extend_vocab, extra_zeros, c_t_1, coverage
 
 def get_output_from_batch(batch):
     dec_batch = batch["target_batch"]
@@ -754,10 +758,14 @@ def write_config():
 
 def print_custum(emotion, dial, ref, hyp_g, hyp_b):
     print("emotion:{}".format(emotion))
+    print()
     print("Context:{}".format(dial))
+    print()
     # print("Topk:{}".format(hyp_t))
     print("Beam: {}".format(hyp_b))
+    print()
     print("Greedy:{}".format(hyp_g))
+    print()
     print("Ref:{}".format(ref))
     print("----------------------------------------------------------------------")
     print("----------------------------------------------------------------------")
@@ -841,10 +849,10 @@ def evaluate(model, data, ty='valid', max_dec_step=30):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-# def make_infinite(dataloader):
-#     while True:
-#         for x in dataloader:
-#             yield x
+def make_infinite(dataloader):
+    while True:
+        for x in dataloader:
+            yield x
 
 def top_k_top_p_filtering(logits, top_k=0, top_p=0, filter_value=-float('Inf')):
     """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
@@ -872,3 +880,9 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0, filter_value=-float('Inf')):
         indices_to_remove = sorted_indices[sorted_indices_to_remove]
         logits[indices_to_remove] = filter_value
     return logits
+
+def gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar):
+    kld = -0.5 * torch.sum(1 + (recog_logvar - prior_logvar)
+               - torch.div(torch.pow(prior_mu - recog_mu, 2), torch.exp(prior_logvar))
+               - torch.div(torch.exp(recog_logvar), torch.exp(prior_logvar)), dim=-1)
+    return kld

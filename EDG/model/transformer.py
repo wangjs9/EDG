@@ -48,7 +48,6 @@ class Encoder(nn.Module):
             attention_dropout: Dropout probability after attention (Should be non-zero only during training)
             relu_dropout: Dropout probability after relu in FFN (Should be non-zero only during training)
             use_mask: Set to True to turn on future value masking
-            >>>>>>>>>> ? >>>>>>>>>>
             universal: whether use the position information in the layers to distinguish the layer position
         """
 
@@ -57,7 +56,7 @@ class Encoder(nn.Module):
         self.num_layers = num_layers
         self.timing_signal = _gen_timing_signal(max_length, hidden_size)
 
-        if (self.universal):
+        if self.universal:
             self.position_signal = _gen_timing_signal(num_layers, hidden_size)
 
         params = (hidden_size,
@@ -71,7 +70,7 @@ class Encoder(nn.Module):
                   relu_dropout)
 
         self.embedding_proj = nn.Linear(embedding_size, hidden_size, bias=False)
-        if (self.universal):
+        if self.universal:
             self.enc = EncoderLayer(*params)
         else:
             self.enc = nn.ModuleList([EncoderLayer(*params) for _ in range(num_layers)])
@@ -90,8 +89,8 @@ class Encoder(nn.Module):
         # Project to hidden size
         x = self.embedding_proj(x) # (batch_size, seq_len, hidden_size)
 
-        if (self.universal):
-            if (config.act):
+        if self.universal:
+            if config.act:
                 x, (self.remainders, self.n_updates) = self.act_fn(x, inputs, self.enc, self.timing_signal,
                                                                    self.position_signal, self.num_layers)
                 y = self.layer_norm(x)
@@ -240,6 +239,7 @@ class Transformer(nn.Module):
         decoder_number: the number of classes
         """
         super(Transformer, self).__init__()
+        self.device = torch.device('cuda' if config.USE_CUDA else 'cpu')
         self.vocab = vocab
         self.vocab_size = vocab.n_words
 
@@ -248,7 +248,7 @@ class Transformer(nn.Module):
                                total_key_depth=config.depth, total_value_depth=config.depth,
                                filter_size=config.filter, universal=config.universal)
 
-        ## multiple decoders
+        ## decoders
         self.decoder = Decoder(config.emb_dim, hidden_size=config.hidden_dim, num_layers=config.hop,
                                num_heads=config.heads,
                                total_key_depth=config.depth, total_value_depth=config.depth,
@@ -307,7 +307,9 @@ class Transformer(nn.Module):
         torch.save(state, model_save_path)
 
     def train_one_batch(self, batch, iter, train=True):
-        enc_batch, _, _, enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
+        enc_batch, _, _, _, _, \
+        _, _, _, \
+        enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
         if (config.noam):
@@ -322,9 +324,7 @@ class Transformer(nn.Module):
         encoder_outputs = self.encoder(self.embedding(enc_batch) + emb_mask, mask_src) # (batch_size, seq_len, hidden_size)
 
         # Decode
-        sos_token = torch.LongTensor([config.SOS_idx] * enc_batch.size(0)).unsqueeze(1)
-        if config.USE_CUDA:
-            sos_token = sos_token.cuda()
+        sos_token = torch.LongTensor([config.SOS_idx] * enc_batch.size(0)).unsqueeze(1).to(self.device)
         dec_batch_shift = torch.cat((sos_token, dec_batch[:, :-1]), 1) # make the first token of sentence be SOS
 
         mask_trg = dec_batch_shift.data.eq(config.PAD_idx).unsqueeze(1)
@@ -376,14 +376,14 @@ class Transformer(nn.Module):
         return loss
 
     def decoder_greedy(self, batch, max_dec_step=30):
-        enc_batch, _, _, enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
+        enc_batch, _, _, _, _, \
+        _, _, _, \
+        enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])
         encoder_outputs = self.encoder(self.embedding(enc_batch) + emb_mask, mask_src)
 
-        ys = torch.ones(1, 1).fill_(config.SOS_idx).long()
-        if config.USE_CUDA:
-            ys = ys.cuda()
+        ys = torch.ones(1, 1).fill_(config.SOS_idx).long().to(self.device)
         mask_trg = ys.data.eq(config.PAD_idx).unsqueeze(1)
         decoded_words = []
         for i in range(max_dec_step + 1):
@@ -403,11 +403,7 @@ class Transformer(nn.Module):
                                   next_word.view(-1)])
             next_word = next_word.data[0]
 
-            if config.USE_CUDA:
-                ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word).cuda()], dim=1)
-                ys = ys.cuda()
-            else:
-                ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word)], dim=1)
+            ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word).to(self.device)], dim=1).to(self.device)
             mask_trg = ys.data.eq(config.PAD_idx).unsqueeze(1)
 
         sent = []
@@ -422,14 +418,14 @@ class Transformer(nn.Module):
         return sent
 
     def decoder_topk(self, batch, max_dec_step=30):
-        enc_batch, _, _, enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
+        enc_batch, _, _, _, _, \
+        _, _, _, \
+        enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])
         encoder_outputs = self.encoder(self.embedding(enc_batch) + emb_mask, mask_src)
 
-        ys = torch.ones(1, 1).fill_(config.SOS_idx).long()
-        if config.USE_CUDA:
-            ys = ys.cuda()
+        ys = torch.ones(1, 1).fill_(config.SOS_idx).long().to(self.device)
         mask_trg = ys.data.eq(config.PAD_idx).unsqueeze(1)
         decoded_words = []
         for i in range(max_dec_step + 1):
@@ -447,11 +443,7 @@ class Transformer(nn.Module):
                                   next_word.view(-1)])
             next_word = next_word.data[0]
 
-            if config.USE_CUDA:
-                ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word).cuda()], dim=1)
-                ys = ys.cuda()
-            else:
-                ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word)], dim=1)
+            ys = torch.cat([ys, torch.ones(1, 1).long().fill_(next_word).to(self.device)], dim=1).to(self.device)
             mask_trg = ys.data.eq(config.PAD_idx).unsqueeze(1)
 
         sent = []
@@ -465,11 +457,10 @@ class Transformer(nn.Module):
             sent.append(st)
         return sent
 
-
 ### CONVERTED FROM https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/models/research/universal_transformer_util.py#L1062
 class ACT_basic(nn.Module):
     """
-
+    Adaptive Computation Time (ACT)
     """
 
     def __init__(self, hidden_size):
@@ -491,14 +482,14 @@ class ACT_basic(nn.Module):
         previous_state = torch.zeros_like(inputs).cuda()
 
         step = 0
-        # for l in range(self.num_layers):
+
         while (((halting_probability < self.threshold) & (n_updates < max_hop)).byte().any()):
-            # as long as there is a True value, the loop continues
+
             # Add timing signal
             state = state + time_enc[:, :inputs.shape[1], :].type_as(inputs.data)
             state = state + pos_enc[:, step, :].unsqueeze(1).repeat(1, inputs.shape[1], 1).type_as(inputs.data)
 
-            p = self.sigma(self.p(state)).squeeze(-1)  # (1, 1)
+            p = self.sigma(self.p(state)).squeeze(-1)  # (batch_size, seq_len, 1)
             # Mask for inputs which have not halted yet
             still_running = (halting_probability < 1.0).float()
 
@@ -537,7 +528,8 @@ class ACT_basic(nn.Module):
             previous_state = (
                         (state * update_weights.unsqueeze(-1)) + (previous_state * (1 - update_weights.unsqueeze(-1))))
             if (decoding):
-                if (step == 0):  previous_att_weight = torch.zeros_like(attention_weight).cuda()  ## [B, S, src_size]
+                if (step == 0):
+                    previous_att_weight = torch.zeros_like(attention_weight).cuda()  ## [B, S, src_size]
                 previous_att_weight = ((attention_weight * update_weights.unsqueeze(-1)) + (
                             previous_att_weight * (1 - update_weights.unsqueeze(-1))))
             ## previous_state is actually the new_state at end of hte loop
