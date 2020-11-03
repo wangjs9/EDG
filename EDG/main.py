@@ -89,7 +89,7 @@ def train_eval(test=False):
     print('MODEL USED', config.model)
     print('TRAINABLE PARAMETERS', count_parameters(model))
 
-    check_iter = 20
+    check_iter = 2000
 
     try:
         if config.USE_CUDA:
@@ -99,15 +99,22 @@ def train_eval(test=False):
         patient = 0
         writer = SummaryWriter(log_dir=config.save_path)
         weights_best = deepcopy(model.state_dict())
-        data_loader_tra = data_loader_tra
         data_iter = make_infinite(data_loader_tra)
-        for n_iter in tqdm(range(10000)): # 1000000
+        for n_iter in tqdm(range(1000000)):
             print(n_iter)
             loss, ppl, bce, acc = model.train_one_batch(next(data_iter), n_iter)
             writer.add_scalars('loss', {'loss_train': loss}, n_iter)
             writer.add_scalars('ppl', {'ppl_train': ppl}, n_iter)
-            writer.add_scalars('bce', {'bce_train': bce}, n_iter)
-            writer.add_scalars('accuracy', {'acc_train': acc}, n_iter)
+            if type(bce) == tuple:
+                writer.add_scalars('bce_1', {'bce_emo_train': bce[0]}, n_iter)
+                writer.add_scalars('bce_2', {'bce_cause_train': bce[1]}, n_iter)
+            else:
+                writer.add_scalars('bce', {'bce_train': bce}, n_iter)
+            if type(acc) == tuple:
+                writer.add_scalars('accuracy_emo', {'acc_emo_train': acc[0]}, n_iter)
+                writer.add_scalars('accuracy_cause', {'acc_cause_train': acc[1]}, n_iter)
+            else:
+                writer.add_scalars('accuracy', {'acc_train': acc}, n_iter)
             if (config.noam):
                 writer.add_scalars('lr', {'learning_rata': model.optimizer._rate}, n_iter)
 
@@ -119,10 +126,18 @@ def train_eval(test=False):
                                                                                            ty="valid", max_dec_step=50)
                 writer.add_scalars('loss', {'loss_valid': loss_val}, n_iter)
                 writer.add_scalars('ppl', {'ppl_valid': ppl_val}, n_iter)
-                writer.add_scalars('bce', {'bce_valid': bce_val}, n_iter)
-                writer.add_scalars('accuracy', {'acc_train': acc_val}, n_iter)
+                if type(bce_val) == tuple:
+                    writer.add_scalars('bce_emo', {'bce_emo_valid': bce_val[0]}, n_iter)
+                    writer.add_scalars('bce_cause', {'bce_cause_valid': bce_val[1]}, n_iter)
+                else:
+                    writer.add_scalars('bce', {'bce_valid': bce_val}, n_iter)
+                if type(acc_val) == tuple:
+                    writer.add_scalars('accuracy_emo', {'acc_valid': acc_val[0]}, n_iter)
+                    writer.add_scalars('accuracy_cause', {'acc_valid': acc_val[1]}, n_iter)
+                else:
+                    writer.add_scalars('accuracy', {'acc_valid': acc_val}, n_iter)
                 model = model.train()
-                if n_iter < 130: # 13000
+                if n_iter < 13000:
                     continue
                 if ppl_val <= best_ppl:
                     best_ppl = ppl_val
@@ -131,7 +146,8 @@ def train_eval(test=False):
                     weights_best = deepcopy(model.state_dict())
                 else:
                     patient += 1
-                if patient > 2: break
+                if patient > 2:
+                    break
 
     except KeyboardInterrupt:
         print('-' * 89)

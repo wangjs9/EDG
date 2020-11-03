@@ -56,54 +56,57 @@ def read_langs(vocab):
                   "i'd": "i would", "i'd": "i would", "aren't": "are not", "isn't": "is not", "wasn't": "was not",
                   "weren't": "were not", "won't": "will not", "there's": "there is", "there're": "there are"}
 
-    # # >>>>>>>>>> historical utterances >>>>>>>>>> #
-    # train_context = np.load('empathetic-dialogue/sys_dialog_texts.train.npy', allow_pickle=True)
-    # # >>>>>>>>>> target causes >>>>>>>>>> #
-    # train_concause = np.load('empathetic-dialogue/sys_dialogcause_probs.train.npy', allow_pickle=True)
-    # # >>>>>>>>>> next expected utterance from the bot >>>>>>>>>> #
-    # train_target = np.load('empathetic-dialogue/sys_target_texts.train.npy', allow_pickle=True)
-    # # >>>>>>>>>> emotions of the conversation >>>>>>>>>> #
-    # train_emotion = np.load('empathetic-dialogue/sys_emotion_texts.train.npy', allow_pickle=True)
-    # # >>>>>>>>>> prompts of the conversation >>>>>>>>>> #
-    # train_situation = np.load('empathetic-dialogue/sys_situation_texts.train.npy', allow_pickle=True)
-    #
-    # dev_context = np.load('empathetic-dialogue/sys_dialog_texts.dev.npy', allow_pickle=True)
-    # dev_causeprob = np.load('empathetic-dialogue/sys_dialogcause_probs.dev.npy', allow_pickle=True)
-    # dev_target = np.load('empathetic-dialogue/sys_target_texts.dev.npy', allow_pickle=True)
-    # dev_emotion = np.load('empathetic-dialogue/sys_emotion_texts.dev.npy', allow_pickle=True)
-    # dev_situation = np.load('empathetic-dialogue/sys_situation_texts.dev.npy', allow_pickle=True)
-    #
-    # test_context = np.load('empathetic-dialogue/sys_dialog_texts.test.npy', allow_pickle=True)
-    # test_concause = np.load('empathetic-dialogue/sys_dialogcause_probs.test.npy', allow_pickle=True)
-    # test_target = np.load('empathetic-dialogue/sys_target_texts.test.npy', allow_pickle=True)
-    # test_emotion = np.load('empathetic-dialogue/sys_emotion_texts.test.npy', allow_pickle=True)
-    # test_situation = np.load('empathetic-dialogue/sys_situation_texts.test.npy', allow_pickle=True)
-
     # >>>>>>>>>> historical utterances >>>>>>>>>> #
-    train_context = np.load('empathetic-dialogue/min_dialog_texts.train.npy', allow_pickle=True)
+    train_context = np.load('empathetic-dialogue/sys_dialog_texts.train.npy', allow_pickle=True)
     # >>>>>>>>>> target causes >>>>>>>>>> #
-    train_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.train.npy', allow_pickle=True)
+    train_causeprob = np.load('empathetic-dialogue/sys_dialogcause_probs.train.npy', allow_pickle=True)
     # >>>>>>>>>> next expected utterance from the bot >>>>>>>>>> #
-    train_target = np.load('empathetic-dialogue/min_target_texts.train.npy', allow_pickle=True)
+    train_target = np.load('empathetic-dialogue/sys_target_texts.train.npy', allow_pickle=True)
     # >>>>>>>>>> emotions of the conversation >>>>>>>>>> #
-    train_emotion = np.load('empathetic-dialogue/min_emotion_texts.train.npy', allow_pickle=True)
+    train_emotion = np.load('empathetic-dialogue/sys_emotion_texts.train.npy', allow_pickle=True)
     # >>>>>>>>>> prompts of the conversation >>>>>>>>>> #
-    train_situation = np.load('empathetic-dialogue/min_situation_texts.train.npy', allow_pickle=True)
-    train_curcause = np.load('empathetic-dialogue/min_curcause_texts.train.npy', allow_pickle=True)
+    train_situation = np.load('empathetic-dialogue/sys_situation_texts.train.npy', allow_pickle=True)
+    train_curcause = np.load('empathetic-dialogue/sys_curcause_probs.train.npy', allow_pickle=True)
 
-    dev_context = np.load('empathetic-dialogue/min_dialog_texts.dev.npy', allow_pickle=True)
-    dev_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.dev.npy', allow_pickle=True)
-    dev_target = np.load('empathetic-dialogue/min_target_texts.dev.npy', allow_pickle=True)
-    dev_emotion = np.load('empathetic-dialogue/min_emotion_texts.dev.npy', allow_pickle=True)
-    dev_situation = np.load('empathetic-dialogue/min_situation_texts.dev.npy', allow_pickle=True)
-    dev_curcause = np.load('empathetic-dialogue/min_curcause_texts.dev.npy', allow_pickle=True)
+    dev_context = np.load('empathetic-dialogue/sys_dialog_texts.dev.npy', allow_pickle=True)
+    dev_causeprob = np.load('empathetic-dialogue/sys_dialogcause_probs.dev.npy', allow_pickle=True)
+    dev_target = np.load('empathetic-dialogue/sys_target_texts.dev.npy', allow_pickle=True)
+    dev_emotion = np.load('empathetic-dialogue/sys_emotion_texts.dev.npy', allow_pickle=True)
+    dev_situation = np.load('empathetic-dialogue/sys_situation_texts.dev.npy', allow_pickle=True)
+    dev_curcause = np.load('empathetic-dialogue/sys_curcause_probs.dev.npy', allow_pickle=True)
 
-    test_context = np.load('empathetic-dialogue/min_dialog_texts.test.npy', allow_pickle=True)
-    test_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.test.npy', allow_pickle=True)
-    test_target = np.load('empathetic-dialogue/min_target_texts.test.npy', allow_pickle=True)
-    test_emotion = np.load('empathetic-dialogue/min_emotion_texts.test.npy', allow_pickle=True)
-    test_situation = np.load('empathetic-dialogue/min_situation_texts.test.npy', allow_pickle=True)
-    test_curcause = np.load('empathetic-dialogue/min_curcause_texts.test.npy', allow_pickle=True)
+    test_context = np.load('empathetic-dialogue/sys_dialog_texts.test.npy', allow_pickle=True)
+    test_causeprob = np.load('empathetic-dialogue/sys_dialogcause_probs.test.npy', allow_pickle=True)
+    test_target = np.load('empathetic-dialogue/sys_target_texts.test.npy', allow_pickle=True)
+    test_emotion = np.load('empathetic-dialogue/sys_emotion_texts.test.npy', allow_pickle=True)
+    test_situation = np.load('empathetic-dialogue/sys_situation_texts.test.npy', allow_pickle=True)
+    test_curcause = np.load('empathetic-dialogue/sys_curcause_probs.test.npy', allow_pickle=True)
+
+    # # >>>>>>>>>> historical utterances >>>>>>>>>> #
+    # train_context = np.load('empathetic-dialogue/min_dialog_texts.train.npy', allow_pickle=True)
+    # # >>>>>>>>>> target causes >>>>>>>>>> #
+    # train_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.train.npy', allow_pickle=True)
+    # # >>>>>>>>>> next expected utterance from the bot >>>>>>>>>> #
+    # train_target = np.load('empathetic-dialogue/min_target_texts.train.npy', allow_pickle=True)
+    # # >>>>>>>>>> emotions of the conversation >>>>>>>>>> #
+    # train_emotion = np.load('empathetic-dialogue/min_emotion_texts.train.npy', allow_pickle=True)
+    # # >>>>>>>>>> prompts of the conversation >>>>>>>>>> #
+    # train_situation = np.load('empathetic-dialogue/min_situation_texts.train.npy', allow_pickle=True)
+    # train_curcause = np.load('empathetic-dialogue/min_curcause_probs.train.npy', allow_pickle=True)
+    #
+    # dev_context = np.load('empathetic-dialogue/min_dialog_texts.dev.npy', allow_pickle=True)
+    # dev_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.dev.npy', allow_pickle=True)
+    # dev_target = np.load('empathetic-dialogue/min_target_texts.dev.npy', allow_pickle=True)
+    # dev_emotion = np.load('empathetic-dialogue/min_emotion_texts.dev.npy', allow_pickle=True)
+    # dev_situation = np.load('empathetic-dialogue/min_situation_texts.dev.npy', allow_pickle=True)
+    # dev_curcause = np.load('empathetic-dialogue/min_curcause_probs.dev.npy', allow_pickle=True)
+    #
+    # test_context = np.load('empathetic-dialogue/min_dialog_texts.test.npy', allow_pickle=True)
+    # test_causeprob = np.load('empathetic-dialogue/min_dialogcause_probs.test.npy', allow_pickle=True)
+    # test_target = np.load('empathetic-dialogue/min_target_texts.test.npy', allow_pickle=True)
+    # test_emotion = np.load('empathetic-dialogue/min_emotion_texts.test.npy', allow_pickle=True)
+    # test_situation = np.load('empathetic-dialogue/min_situation_texts.test.npy', allow_pickle=True)
+    # test_curcause = np.load('empathetic-dialogue/min_curcause_probs.test.npy', allow_pickle=True)
 
     data_train = {'context': [], 'causeprob': [], 'target': [], 'emotion': [], 'situation': [], 'curcause': []}
     data_dev = {'context': [], 'causeprob': [], 'target': [], 'emotion': [], 'situation': [], 'curcause': []}
@@ -201,11 +204,11 @@ def read_langs(vocab):
     return data_train, data_dev, data_test, vocab
 
 def load_dataset():
-    # if (os.path.exists('empathetic-dialogue/dataset_preproc.p')):
-    if (os.path.exists('empathetic-dialogue/mindataset_preproc.p')):
+    if (os.path.exists('empathetic-dialogue/dataset_preproc.p')):
+    # if (os.path.exists('empathetic-dialogue/min_dataset_preproc.p')):
         print("LOADING empathetic_dialogue")
-        # with open('empathetic-dialogue/dataset_preproc.p', "rb") as f:
-        with open('empathetic-dialogue/mindataset_preproc.p', "rb") as f:
+        with open('empathetic-dialogue/dataset_preproc.p', "rb") as f:
+        # with open('empathetic-dialogue/mindataset_preproc.p', "rb") as f:
             [data_tra, data_val, data_tst, vocab] = pickle.load(f)
             # >>>>>>>>>> dictionaries >>>>>>>>>> #
     else:
@@ -214,7 +217,8 @@ def load_dataset():
             {config.UNK_idx: "UNK", config.PAD_idx: "PAD", config.EOS_idx: "EOS", config.SOS_idx: "SOS",
              config.USR_idx: "USR", config.SYS_idx: "SYS", config.SIT_idx: "SIT", config.CLS_idx: "CLS",
              config.SEP_idx: "SEP"}))
-        with open('empathetic-dialogue/mindataset_preproc.p', "wb") as f:
+        with open('empathetic-dialogue/dataset_preproc.p', "wb") as f:
+        # with open('empathetic-dialogue/min_dataset_preproc.p', "wb") as f:
             pickle.dump([data_tra, data_val, data_tst, vocab], f)
             print("Saved PICKLE")
     for i in range(3):

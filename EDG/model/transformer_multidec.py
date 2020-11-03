@@ -403,6 +403,7 @@ class Transformer_multidec(nn.Module):
     def train_one_batch(self, batch, iter, train=True):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
@@ -497,6 +498,7 @@ class Transformer_multidec(nn.Module):
     def decoder_greedy(self, batch, max_dec_step=30):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])
@@ -561,6 +563,7 @@ class Transformer_multidec(nn.Module):
     def decoder_topk(self, batch, max_dec_step=30):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])

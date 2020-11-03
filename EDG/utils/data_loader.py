@@ -39,6 +39,8 @@ class Dataset(data.Dataset):
         item["context_text"] = self.data["context"][index]
         item["target_text"] = self.data["target"][index]
         item["emotion_text"] = self.data["emotion"][index]
+
+
         causeprob = self.data["causeprob"][index]
 
         item["context"], item["context_mask"], item["causepos"], \
@@ -51,13 +53,25 @@ class Dataset(data.Dataset):
         item["target"] = self.preprocess(item["target_text"], anw=True)
         item["emotion"], item["emotion_label"] = self.preprocess_emo(item["emotion_text"], self.emo_map)
 
+        item["clause"] = [self.preprocess(txt, cause=True) for txt in item["context_text"]]
+        if self.data["curcause"][index] == []:
+            item["curcuase_prob"] = [0 for i in range(len(item["clause"]))]
+        else:
+            item["curcuase_prob"] = [score if score > 0.5 else 0 for score in self.data["curcause"][index]]
+
+        item["curcuase_prob"], item["clause"] = map(list, zip(*sorted(zip(item["curcuase_prob"], item["clause"]), key=lambda x: x[0], reverse=True)))
+
         return item
 
-    def preprocess(self, arr, scores = None, anw=False):
+    def preprocess(self, arr, scores = None, anw=False, cause=False):
         """Converts words to ids."""
         if anw:
             sequence = [self.vocab.word2index[word] if word in self.vocab.word2index else config.UNK_idx for word in
                         arr] + [config.EOS_idx]
+            return torch.LongTensor(sequence)
+        elif cause:
+            sequence = [self.vocab.word2index[word] if word in self.vocab.word2index else config.UNK_idx for word in
+                        arr]
             return torch.LongTensor(sequence)
         else:
             situation, context = arr
@@ -138,16 +152,29 @@ def collate_fn(data):
         padded_seqs: use 1 to pad the rest
         lengths: the lengths of seq in sequences
         """
-        lengths = [len(seq) for seq in sequences]
-        padded_seqs = torch.ones(len(sequences), max(lengths)).long()  ## padding index 1
-
         if scores == None:
+            lengths = [len(seq) for seq in sequences]
+            padded_seqs = torch.ones(len(sequences), max(lengths)).long()  ## padding index 1
             for i, seq in enumerate(sequences):
                 end = lengths[i]
                 padded_seqs[i, :end] = seq[:end]
             return padded_seqs, lengths
 
+        elif positions == None:
+            num_clause = [len(seq) for seq in sequences]
+            lengths = [[len(seq) for seq in sequence] for sequence in sequences]
+            padded_seqs = torch.ones(len(sequences), max(num_clause), max([max(length) for length in lengths])).long()  ## padding index 1
+            curcause_score = torch.zeros(len(sequences), max(num_clause)).long()
+            for i, sequence in enumerate(sequences):
+                for j, seq in enumerate(sequence):
+                    end = lengths[i][j]
+                    padded_seqs[i, j, :end] = seq[:end]
+                curcause_score[i, :num_clause[i]] = torch.FloatTensor(scores[i][:num_clause[i]])
+            return padded_seqs, curcause_score
+
         else:
+            lengths = [len(seq) for seq in sequences]
+            padded_seqs = torch.ones(len(sequences), max(lengths)).long()  ## padding index 1
             cause_score = torch.zeros(len(sequences), max(lengths)).long()
             cause_pos = torch.zeros(len(sequences), max(lengths)).long()
             for i, seq in enumerate(sequences):
@@ -157,7 +184,7 @@ def collate_fn(data):
                 padded_seqs[i, :end] = seq[:end]
                 cause_score[i, :end] = score[:end]
                 cause_pos[i, :end] = pos[:end]
-            return padded_seqs, lengths, cause_score, cause_pos
+            return padded_seqs, cause_score, cause_pos, lengths
 
     data.sort(key=lambda x: len(x["context"]), reverse=True)  ## sort by source seq
     item_info = {}
@@ -169,7 +196,7 @@ def collate_fn(data):
         item_info[key] = [d[key] for d in data]
 
     ## input
-    input_batch, input_lengths, input_causeprob, input_causepos = merge(item_info['context'],
+    input_batch, input_causeprob, input_causepos, input_lengths = merge(item_info['context'],
                                             scores=item_info['causeprob'],
                                             positions=item_info['causepos'])
 
@@ -177,6 +204,7 @@ def collate_fn(data):
 
     ## cause
     cause_batch, cause_lengths = merge(item_info['causeclz'])
+    clause_batch, curcause_probs = merge(item_info["clause"], scores=item_info["curcuase_prob"])
 
     ## Target
     target_batch, target_lengths = merge(item_info['target'])
@@ -197,6 +225,8 @@ def collate_fn(data):
     ##cause
     d["cause_batch"] = cause_batch
     d["cause_lengths"] = torch.LongTensor(cause_lengths)
+    d["curcause_clause"] = clause_batch
+    d["curcause_prob"] = curcause_probs
     ##target
     d["target_batch"] = target_batch
     d["target_lengths"] = torch.LongTensor(target_lengths)

@@ -33,7 +33,6 @@ class EncoderLayer(nn.Module):
             hidden_size: Hidden size
             total_key_depth: Size of last dimension of keys. Must be divisible by num_head
             total_value_depth: Size of last dimension of values. Must be divisible by num_head
-            output_depth: Size last dimension of the final output
             filter_size: Hidden size of the middle layer in FFN
             num_heads: Number of attention heads
             bias_mask: Masking tensor to prevent connections to future elements
@@ -90,7 +89,6 @@ class DecoderLayer(nn.Module):
             hidden_size: Hidden size
             total_key_depth: Size of last dimension of keys. Must be divisible by num_head
             total_value_depth: Size of last dimension of values. Must be divisible by num_head
-            output_depth: Size last dimension of the final output
             filter_size: Hidden size of the middle layer in FFN
             num_heads: Number of attention heads
             bias_mask: Masking tensor to prevent connections to future elements
@@ -305,9 +303,14 @@ class MultiHeadAttention(nn.Module):
         self.bias_mask = bias_mask
 
         # Key and query depth will be same
-        self.query_linear = nn.Linear(input_depth, total_key_depth, bias=False)
-        self.key_linear = nn.Linear(input_depth, total_key_depth, bias=False)
-        self.value_linear = nn.Linear(input_depth, total_value_depth, bias=False)
+        if type(input_depth) == tuple:
+            input_depth_q, input_depth_k, input_depth_v = input_depth
+        else:
+            input_depth_q, input_depth_k, input_depth_v = input_depth, input_depth, input_depth
+
+        self.query_linear = nn.Linear(input_depth_q, total_key_depth, bias=False)
+        self.key_linear = nn.Linear(input_depth_k, total_key_depth, bias=False)
+        self.value_linear = nn.Linear(input_depth_v, total_value_depth, bias=False)
         self.output_linear = nn.Linear(total_value_depth, output_depth, bias=False)
 
         self.dropout = nn.Dropout(dropout)
@@ -347,15 +350,15 @@ class MultiHeadAttention(nn.Module):
 
         # Split into multiple heads
         queries = self._split_heads(queries) # (batch_size, num_heads, seq_length, d)
-        keys = self._split_heads(keys) # (batch_size, num_heads, seq_length, d)
-        values = self._split_heads(values) # (batch_size, num_heads, seq_length, d)
+        keys = self._split_heads(keys) # (batch_size, num_heads, seq_length_k, d)
+        values = self._split_heads(values) # (batch_size, num_heads, seq_length_v, d)
 
         # Scale queries
         queries *= self.query_scale
 
         # Combine queries and keys
         logits = torch.matmul(queries, keys.permute(0, 1, 3, 2))
-        # shape: (batch_size, num_heads, seq_length, seq_length)
+        # shape: (batch_size, num_heads, seq_length_q, seq_length_k)
 
         if mask is not None:
             mask = mask.unsqueeze(1)  # [B, 1, 1, T_values]
@@ -384,6 +387,49 @@ class MultiHeadAttention(nn.Module):
         outputs = self.output_linear(contexts)
         # shape: (batch_size, seq_length, output_size)
         return outputs, attetion_weights
+
+class RTHNLayer(nn.Module):
+    """
+    An implementation of the framework in https://arxiv.org/abs/1906.01236
+    Refer Figure 2
+    """
+    def __init__(self, input_depth, total_key_depth, total_value_depth, num_heads, output_depth,
+                 program_class, max_doc_len, bias_mask=None, attention_dropout=0.0,
+                 layer_dropout=0.0):
+        super(RTHNLayer, self).__init__()
+        self.program_class = program_class
+        self.max_doc_len = max_doc_len
+        self.output_depth = output_depth
+        self.multi_head_attention = MultiHeadAttention(input_depth, total_key_depth, total_value_depth,
+                        output_depth, num_heads, bias_mask, attention_dropout)
+
+        self.class_lt = nn.Linear(output_depth, program_class)
+        self.pred_lt = nn.Linear(max_doc_len, max_doc_len)
+        self.layer_dropout = nn.Dropout(layer_dropout)
+
+    def forward(self, queries, keys, values, doc_len, attn_mask=None):
+        self.device = queries.device
+        batch_size = queries.size(0)
+        pred_zeros = torch.zeros((batch_size, self.max_doc_len, self.max_doc_len)).to(self.device)
+        pred_ones = torch.ones_like(pred_zeros).to(self.device)
+        pred_two = torch.ones_like(pred_zeros).to(self.device).fill_(2.)
+        matrix = (1 - torch.eye(self.max_doc_len).to(self.device)).unsqueeze(0) + pred_zeros
+
+        y, _ = self.multi_head_attention(queries, keys, values, attn_mask.unsqueeze(1)) # (batch_size, doc_len, input_depth)
+        pred = self.class_lt(self.layer_dropout(y.reshape(-1, self.output_depth).to(self.device)))  # (batch_size, doc_len, class)
+
+        pred = torch.softmax(pred * attn_mask.reshape(-1, 1).float(), dim=-1).\
+            reshape(-1, self.max_doc_len, self.program_class)  # (batch_size, doc_len, class)
+        reg = torch.tensor(0.).to(self.device)
+        for param in self.class_lt.parameters():
+            reg = reg + torch.norm(param)
+
+        pred_label = torch.argmax(pred, dim=-1).reshape(-1, 1, self.max_doc_len).float() # (batch_size, 1, doc_len)
+        pred_label = pred_label * pred_two - pred_ones
+        pred_label = (pred_label + pred_zeros) * matrix
+        pred_label = torch.tanh(self.pred_lt(pred_label.reshape(-1, self.max_doc_len))).reshape(batch_size, self.max_doc_len, self.max_doc_len)
+
+        return y, pred, pred_label, reg # y: (batch_size, doc_len, input_depth); pred: (batch_size, doc_len, program_class)
 
 class Conv(nn.Module):
     """
@@ -671,10 +717,13 @@ def get_input_from_batch(batch):
     enc_causepos = batch["input_causepos"]
     cause_batch = batch["cause_batch"]
     cause_lens = batch["cause_lengths"]
+    curcause_clause = batch["curcause_clause"]
+    curcause_prob = batch["curcause_prob"]
     batch_size, max_enc_len = enc_batch.size()
     _, max_cause_len = cause_batch.size()
     assert len(enc_lens) == batch_size
     assert len(cause_lens) == batch_size
+    assert len(curcause_clause) == batch_size
 
     enc_padding_mask = sequence_mask(enc_lens, max_len=max_enc_len).float()
     cause_padding_mask = sequence_mask(cause_lens, max_len=max_cause_len).float()
@@ -711,6 +760,7 @@ def get_input_from_batch(batch):
 
     return enc_batch, enc_causeprob, enc_causepos, enc_padding_mask, enc_lens, \
            cause_batch, cause_padding_mask, cause_lens, \
+           curcause_clause, curcause_prob, \
            enc_batch_extend_vocab, extra_zeros, c_t_1, coverage
 
 def get_output_from_batch(batch):
@@ -806,7 +856,6 @@ def evaluate(model, data, ty='valid', max_dec_step=30):
     pbar = tqdm(enumerate(data), total=len(data))
     for j, batch in pbar:
         loss, ppl, bce_prog, acc_prog = model.train_one_batch(batch, 0, train=False)
-
         l.append(loss)
         p.append(ppl)
         bce.append(bce_prog)
@@ -833,15 +882,31 @@ def evaluate(model, data, ty='valid', max_dec_step=30):
 
     loss = np.mean(l)
     ppl = np.mean(p)
-    bce = np.mean(bce)
-    acc = np.mean(acc)
+    if type(bce[0]) == tuple:
+        bce_emo = np.mean([b[0] for b in bce])
+        bce_cause = np.mean([b[1] for b in bce])
+        bce = (bce_emo, bce_cause)
+    else:
+        bce = np.mean(bce)
+    if type(acc[0]) == tuple:
+        acc_emo = np.mean([a[0] for a in acc])
+        acc_cause = np.mean([a[1] for a in acc])
+        acc = (acc_emo, acc_cause)
+    else:
+        acc = np.mean(acc)
 
     bleu_score_g = moses_multi_bleu(np.array(hyp_g), np.array(ref), lowercase=True)
     bleu_score_b = moses_multi_bleu(np.array(hyp_b), np.array(ref), lowercase=True)
     # bleu_score_t = moses_multi_bleu(np.array(hyp_t), np.array(ref), lowercase=True)
 
-    print("EVAL\tLoss\tPPL\tAccuracy\tBleu_g\tBleu_b")
-    print(
+    if type(acc) == tuple:
+        print("EVAL\tLoss\tPPL\tAccuracy_emo\tAccuracy_cause\tBleu_g\tBleu_b")
+        print(
+            "{}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.2f}\t{:.2f}\t{:.2f}".format(ty, loss, math.exp(loss), acc[0], acc[1], bleu_score_g,
+                                                                bleu_score_b))
+    else:
+        print("EVAL\tLoss\tPPL\tAccuracy\tBleu_g\tBleu_b")
+        print(
         "{}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.2f}\t{:.2f}".format(ty, loss, math.exp(loss), acc, bleu_score_g, bleu_score_b))
 
     return loss, math.exp(loss), bce, acc, bleu_score_g, bleu_score_b
@@ -886,3 +951,7 @@ def gaussian_kld(recog_mu, recog_logvar, prior_mu, prior_logvar):
                - torch.div(torch.pow(prior_mu - recog_mu, 2), torch.exp(prior_logvar))
                - torch.div(torch.exp(recog_logvar), torch.exp(prior_logvar)), dim=-1)
     return kld
+
+
+
+

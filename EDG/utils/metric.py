@@ -84,15 +84,6 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
     if np.size(hypotheses) == 0:
         return np.float32(0.0)
 
-    # # Get MOSES multi-bleu script
-    # try:
-    #     multi_bleu_path, _ = urllib.request.urlretrieve("https://raw.githubusercontent.com/moses-smt/mosesdecoder/master/scripts/generic/multi-bleu.perl")
-    #     os.chmod(multi_bleu_path, 0o755)
-    # except: #pylint: disable=W0702
-    #     print("Unable to fetch multi-bleu.perl script, using local.")
-    #     metrics_dir = os.path.dirname(os.path.realpath(__file__))
-    #     bin_dir = os.path.abspath(os.path.join(metrics_dir, "..", "..", "bin"))
-    #     multi_bleu_path = os.path.join(bin_dir, "utils/multi-bleu.perl")
     multi_bleu_path = "utils/multi-bleu.perl"
     os.chmod(multi_bleu_path, 0o755)
 
@@ -129,10 +120,6 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
     hypothesis_file.close()
     reference_file.close()
     return bleu_score
-
-
-# pylint: disable=C0103
-
 
 def _get_ngrams(n, text):
     """Calcualtes n-grams.

@@ -309,6 +309,7 @@ class Transformer(nn.Module):
     def train_one_batch(self, batch, iter, train=True):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
@@ -337,14 +338,14 @@ class Transformer(nn.Module):
         ## loss: NNL if ptr else Cross entropy
         loss = self.criterion(logit.contiguous().view(-1, logit.size(-1)), dec_batch.contiguous().view(-1))
 
+        loss_bce_program, program_acc = 0, 0
         # multi-task
-        if config.multitask:
+        if config.emo_multitask:
             # add the loss function of label prediction
             # q_h = torch.mean(encoder_outputs,dim=1)
             q_h = encoder_outputs[:, 0] # the first token of the sentence CLS, shape: (batch_size, 1, hidden_size)
             logit_prob = self.decoder_key(q_h).to('cuda') # (batch_size, 1, decoder_num)
-            loss = self.criterion(logit.contiguous().view(-1, logit.size(-1)), dec_batch.contiguous().view(-1)) + \
-                   nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda())
+            loss += nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda())
             loss_bce_program = nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda()).item()
             pred_program = np.argmax(logit_prob.detach().cpu().numpy(), axis=1)
             program_acc = accuracy_score(batch["program_label"], pred_program)
@@ -356,16 +357,16 @@ class Transformer(nn.Module):
         if (train):
             loss.backward()
             self.optimizer.step()
-        if config.multitask:
-            if (config.label_smoothing):
-                return loss_ppl, math.exp(min(loss_ppl, 100)), loss_bce_program, program_acc
-            else:
-                return loss.item(), math.exp(min(loss.item(), 100)), loss_bce_program, program_acc
+        # if config.emo_multitask:
+        if (config.label_smoothing):
+            return loss_ppl, math.exp(min(loss_ppl, 100)), loss_bce_program, program_acc
         else:
-            if (config.label_smoothing):
-                return loss_ppl, math.exp(min(loss_ppl, 100)), 0, 0
-            else:
-                return loss.item(), math.exp(min(loss.item(), 100)), 0, 0
+            return loss.item(), math.exp(min(loss.item(), 100)), loss_bce_program, program_acc
+        # else:
+        #     if (config.label_smoothing):
+        #         return loss_ppl, math.exp(min(loss_ppl, 100)), 0, 0
+        #     else:
+        #         return loss.item(), math.exp(min(loss.item(), 100)), 0, 0
 
     def compute_act_loss(self, module):
         R_t = module.remainders
@@ -378,6 +379,7 @@ class Transformer(nn.Module):
     def decoder_greedy(self, batch, max_dec_step=30):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])
@@ -420,6 +422,7 @@ class Transformer(nn.Module):
     def decoder_topk(self, batch, max_dec_step=30):
         enc_batch, _, _, _, _, \
         _, _, _, \
+        _, _, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
         emb_mask = self.embedding(batch["mask_input"])

@@ -288,11 +288,12 @@ class Transformer_CVAE(nn.Module):
         if model_file_path is not None:
             print("loading weights")
             state = torch.load(model_file_path, map_location=lambda storage, location: storage)
+            self.embedding.load_state_dict(state['embedding_dict'])
             self.encoder.load_state_dict(state['encoder_state_dict'])
+            self.caz_encoder.load_state_dict(state['caz_encoder_dict'])
             self.decoder.load_state_dict(state['decoder_state_dict'])
             self.latent_layer.load_state_dict(state['latent_layer_state_dict'])
             self.generator.load_state_dict(state['generator_dict'])
-            self.embedding.load_state_dict(state['embedding_dict'])
             self.decoder_key.load_state_dict(state['decoder_key_state_dict'])
             if (load_optim):
                 self.optimizer.load_state_dict(state['optimizer'])
@@ -308,6 +309,7 @@ class Transformer_CVAE(nn.Module):
         state = {
             'iter': iter,
             'encoder_state_dict': self.encoder.state_dict(),
+            'caz_encoder_dict': self.caz_encoder.state_dict(),
             'decoder_state_dict': self.decoder.state_dict(),
             'latent_layer_state_dict': self.latent_layer.state_dict(),
             'generator_dict': self.generator.state_dict(),
@@ -324,7 +326,8 @@ class Transformer_CVAE(nn.Module):
 
     def train_one_batch(self, batch, iter, train=True):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
-        cause_batch, _, _,\
+        cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
@@ -402,6 +405,7 @@ class Transformer_CVAE(nn.Module):
     def decoder_greedy(self, batch, max_dec_step=30):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
         cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
 
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
@@ -457,6 +461,7 @@ class Transformer_CVAE(nn.Module):
     def decoder_topk(self, batch, max_dec_step=30):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
         cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
 
         ## Encode
@@ -534,6 +539,7 @@ class Transformer_ECE(nn.Module):
                                filter_size=config.filter)
 
         self.decoder_key = nn.Linear(config.hidden_dim, decoder_number, bias=False)
+        self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 1, bias=False)
         self.generator = Generator(config.hidden_dim, self.vocab_size)
 
         if config.weight_sharing:
@@ -552,11 +558,12 @@ class Transformer_ECE(nn.Module):
         if model_file_path is not None:
             print("loading weights")
             state = torch.load(model_file_path, map_location=lambda storage, location: storage)
-            self.encoder.load_state_dict(state['encoder_state_dict'])
-            self.decoder.load_state_dict(state['decoder_state_dict'])
-            self.latent_layer.load_state_dict(state['latent_layer_state_dict'])
-            self.generator.load_state_dict(state['generator_dict'])
             self.embedding.load_state_dict(state['embedding_dict'])
+            self.encoder.load_state_dict(state['encoder_state_dict'])
+            self.caz_encoder.load_state_dict(state['caz_encoder_dict'])
+            self.decoder.load_state_dict(state['decoder_state_dict'])
+            self.cause_evaluator.load_state_dict(state['cause_evaluator_dict'])
+            self.generator.load_state_dict(state['generator_dict'])
             self.decoder_key.load_state_dict(state['decoder_key_state_dict'])
             if (load_optim):
                 self.optimizer.load_state_dict(state['optimizer'])
@@ -572,8 +579,10 @@ class Transformer_ECE(nn.Module):
         state = {
             'iter': iter,
             'encoder_state_dict': self.encoder.state_dict(),
+            'caz_encoder_dict': self.caz_encoder.state_dict(),
             'decoder_state_dict': self.decoder.state_dict(),
             'generator_dict': self.generator.state_dict(),
+            'cause_evaluator_dict': self.cause_evaluator.state_dict(),
             'decoder_key_state_dict': self.decoder_key.state_dict(),
             'embedding_dict': self.embedding.state_dict(),
             'optimizer': self.optimizer.state_dict(),
@@ -587,7 +596,8 @@ class Transformer_ECE(nn.Module):
 
     def train_one_batch(self, batch, iter, train=True):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
-        cause_batch, _, _,\
+        cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
@@ -615,21 +625,44 @@ class Transformer_ECE(nn.Module):
         dec_input[:, 0] = dec_input[:, 0] + caz_encoder_outputs[:, 0]
 
         pre_logit, attn_dist = self.decoder(dec_input, encoder_outputs, (mask_src, mask_trg))
+
         logit = self.generator(pre_logit, attn_dist, enc_batch_extend_vocab if config.pointer_gen else None,
                                extra_zeros, attn_dist_db=None)
 
         loss = self.criterion(logit.contiguous().view(-1, logit.size(-1)), dec_batch.contiguous().view(-1))
 
+        loss_bce_program, loss_bce_caz, program_acc = 0, 0, 0
+
         # multi-task
-        if config.multitask:
+        if config.emo_multitask:
             # add the loss function of label prediction
             # q_h = torch.mean(encoder_outputs,dim=1)
             q_h = encoder_outputs[:, 0]  # the first token of the sentence CLS, shape: (batch_size, 1, hidden_size)
-            logit_prob = self.decoder_key(q_h).to('cuda')  # (batch_size, 1, decoder_num)
+            logit_prob = self.decoder_key(q_h).to(self.device)  # (batch_size, 1, decoder_num)
             loss += nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda())
             loss_bce_program = nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda()).item()
             pred_program = np.argmax(logit_prob.detach().cpu().numpy(), axis=1)
             program_acc = accuracy_score(batch["program_label"], pred_program)
+
+        if config.caz_multitask:
+            # add the loss function of cause prediction
+            batch_size = curcause_clause.size(0)
+            clause_num = curcause_clause.size(1)
+            curcause_clause = curcause_clause.reshape(batch_size * clause_num, -1).to(self.device)
+            curcause_prob = curcause_prob.reshape(batch_size * clause_num, -1).to(self.device)
+            ### mask_curcause = curcause_clause.data.eq(config.PAD_idx).to(self.device) # (batch_size * num_clause, num_seq)
+            curcause_embed = self.embedding(curcause_clause)  # (batch_size*num_clause, num_seq, hid_dim)
+            # do an attention action with curcause and pre_logit
+            cause_weights = nn.functional.softmax(
+                torch.matmul(curcause_embed, pre_logit.repeat(clause_num, 1, 1).permute(0, 2, 1)), dim=-1)
+            curcause_attn = torch.matmul(cause_weights, pre_logit.repeat(clause_num, 1, 1)).squeeze(-1).to(self.device)
+            curcause = torch.cat((curcause_embed, curcause_attn), dim=-1)
+            curcause_pred = torch.sigmoid(self.cause_evaluator(torch.mean(curcause, dim=-2, keepdim=False)))
+            # curcause_pred = curcause_pred[:, 0]
+            loss += nn.CrossEntropyLoss()(curcause_pred, torch.argmax(curcause_prob, dim=-1))
+            loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, torch.argmax(curcause_prob, dim=-1)).item()
+            pred_cause = np.argmax(curcause_pred.detach().cpu().numpy(), axis=-1)
+            cause_acc = accuracy_score(np.argmax(curcause_prob.detach().cpu().numpy(), axis=-1), pred_cause)
 
         if (config.label_smoothing):
             loss_ppl = self.criterion_ppl(logit.contiguous().view(-1, logit.size(-1)),
@@ -638,16 +671,11 @@ class Transformer_ECE(nn.Module):
         if (train):
             loss.backward()
             self.optimizer.step()
-        if config.multitask:
-            if (config.label_smoothing):
-                return loss_ppl, math.exp(min(loss_ppl, 100)), loss_bce_program, program_acc
-            else:
-                return loss.item(), math.exp(min(loss.item(), 100)), loss_bce_program, program_acc
+
+        if (config.label_smoothing):
+            return loss_ppl, math.exp(min(loss_ppl, 100)), (loss_bce_program, loss_bce_caz), (program_acc, cause_acc)
         else:
-            if (config.label_smoothing):
-                return loss_ppl, math.exp(min(loss_ppl, 100)), 0, 0
-            else:
-                return loss.item(), math.exp(min(loss.item(), 100)), 0, 0
+            return loss.item(), math.exp(min(loss.item(), 100)), (loss_bce_program, loss_bce_caz), (program_acc, cause_acc)
 
     def compute_act_loss(self, module):
         R_t = module.remainders
@@ -660,6 +688,7 @@ class Transformer_ECE(nn.Module):
     def decoder_greedy(self, batch, max_dec_step=30):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
         cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
 
         mask_src = enc_batch.data.eq(config.PAD_idx).unsqueeze(1)
@@ -713,6 +742,7 @@ class Transformer_ECE(nn.Module):
     def decoder_topk(self, batch, max_dec_step=30):
         enc_batch, enc_causeprob, enc_causepos, _, _, \
         cause_batch, _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
 
         ## Encode

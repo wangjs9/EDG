@@ -44,7 +44,8 @@ parser.add_argument("--kl_ceiling", type=float, default=0.1)
 parser.add_argument("--full_kl_step", type=int, default=50)
 
 parser.add_argument("--large_decoder", action="store_true")
-parser.add_argument("--multitask", action="store_true")
+parser.add_argument("--emo_multitask", action="store_true")
+parser.add_argument("--caz_multitask", action="store_true")
 parser.add_argument("--is_coverage", action="store_true")
 parser.add_argument("--use_oov_emb", action="store_true")
 parser.add_argument("--pretrain_emb", action="store_true")
@@ -88,7 +89,8 @@ topk = arg.topk
 l1 = arg.l1
 oracle = arg.oracle
 basic_learner = arg.basic_learner
-multitask = arg.multitask
+emo_multitask = arg.emo_multitask
+caz_multitask = arg.caz_multitask
 softmax = arg.softmax
 mean_query = arg.mean_query
 schedule = arg.schedule
