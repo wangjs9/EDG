@@ -162,7 +162,14 @@ def train_eval(test=False):
         file_summary = config.save_path + "summary.txt"
         with open(file_summary, 'w') as the_file:
             the_file.write("EVAL\tLoss\tPPL\tAccuracy\tBleu_g\tBleu_b\n")
-            the_file.write("{}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.2f}\n".format("test", loss_test, ppl_test, acc_test,
+            if type(acc_test) == tuple:
+                the_file.write("EVAL\tLoss\tPPL\tAccuracy_emo\tAccuracy_cause\tBleu_g\tBleu_b\n")
+                the_file.write(
+                    "{}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.2f}\n".format("test", loss_test, ppl_test, acc_test[0], acc_test[1],
+                                                                          bleu_score_g, bleu_score_b))
+            else:
+                the_file.write("EVAL\tLoss\tPPL\tAccuracy\tBleu_g\tBleu_b\n")
+                the_file.write("{}\t{:.4f}\t{:.4f}\t{:.4f}\t{:.2f}\t{:.2f}\n".format("test", loss_test, ppl_test, acc_test,
                                                                                  bleu_score_g, bleu_score_b))
 
 if __name__ == '__main__':

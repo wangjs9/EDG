@@ -238,7 +238,7 @@ class MultiExpertMultiHeadAttention(nn.Module):
         values = self._split_heads(values)
 
         # Scale queries
-        queries *= self.query_scale
+        queries = queries * self.query_scale
 
         # Combine queries and keys
         logits = torch.matmul(queries, keys.permute(0, 1, 2, 4, 3))
@@ -354,7 +354,7 @@ class MultiHeadAttention(nn.Module):
         values = self._split_heads(values) # (batch_size, num_heads, seq_length_v, d)
 
         # Scale queries
-        queries *= self.query_scale
+        queries = queries * self.query_scale
 
         # Combine queries and keys
         logits = torch.matmul(queries, keys.permute(0, 1, 3, 2))
@@ -407,7 +407,7 @@ class RTHNLayer(nn.Module):
         self.pred_lt = nn.Linear(max_doc_len, max_doc_len)
         self.layer_dropout = nn.Dropout(layer_dropout)
 
-    def forward(self, queries, keys, values, doc_len, attn_mask=None):
+    def forward(self, queries, keys, values, attn_mask=None):
         self.device = queries.device
         batch_size = queries.size(0)
         pred_zeros = torch.zeros((batch_size, self.max_doc_len, self.max_doc_len)).to(self.device)

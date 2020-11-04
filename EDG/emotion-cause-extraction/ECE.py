@@ -31,18 +31,26 @@ def run():
     np.random.seed(0)
 
     train_DataIter, dev_DataIter = DataIter('../reman/', config.batch_size, device)
-    model = RTHN(config.save_path, config.embed_dim, config.embed_dim_pos, config.n_hidden, config.n_layers,
-                 config.posembedding_path, config.max_seq_len, config.max_doc_len, config.n_class,
-                 num_heads=8, use_mask=True, input_dropout=0.0, word_dropout=0.0,
-                 layer_dropout=0.0, attention_dropout=0.0, learning_rate=config.lr_main).to(device)
+    hyper_params = (config.save_path,
+                    config.embed_dim,
+                    config.embed_dim_pos,
+                    config.n_hidden,
+                    config.n_layers,
+                    config.posembedding_path,
+                    config.max_seq_len,
+                    config.max_doc_len,
+                    config.n_class)
+    model = RTHN(*hyper_params, num_heads=config.num_heads, use_mask=True, input_dropout=0.0, word_dropout=config.word_dropout,
+                 layer_dropout=config.layer_dropout, attention_dropout=config.attention_dropout, lr=config.lr_main, lr_assist=config.lr_assist,
+                 l2_reg=config.l2_reg).to(device)
 
     try:
         model = model.train()
-        check_iter = 2000
+        check_iter = 500
         best_accuracy, best_precision, best_recall, best_F1 = 0, 0, 0, 0
         patient = 0
         writer = SummaryWriter(log_dir=config.save_path)
-        for n_iter in tqdm(range(1000000)):
+        for n_iter in tqdm(range(10000)):
             print(n_iter)
             accuracy_train, precision_train, recall_train, F1_train = model(*next(train_DataIter))
 
@@ -59,9 +67,10 @@ def run():
                 writer.add_scalars('recall', {'recall_train': recall}, n_iter)
                 writer.add_scalars('F1', {'F1_train': F1}, n_iter)
                 model = model.train()
-                if n_iter < 13000:
+
+                if n_iter < 1300:
                     continue
-                if F1 <= best_F1:
+                if F1 >= best_F1:
                     best_F1 = F1
                     patient = 0
                     model.save_model(n_iter, precision, recall, F1)

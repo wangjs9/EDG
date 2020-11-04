@@ -14,8 +14,7 @@ from model.common_layer import RTHNLayer, _gen_bias_mask
 class RTHN(nn.Module):
     def __init__(self, model_dir, embed_dim, pos_embed_dim, hidden_size, n_layers, posembedding_path,
                  max_seq_len, max_doc_len, program_class, num_heads=8, use_mask=False, input_dropout=0.0,
-                 word_dropout=0.0, layer_dropout=0.0, attention_dropout=0.0, learning_rate=1e-3,
-                 l2_reg=1e-5):
+                 word_dropout=0.0, layer_dropout=0.0, attention_dropout=0.0, lr=1e-3, lr_assist=1e-5, l2_reg=1e-5):
         super(RTHN, self).__init__()
 
         self.model_dir = model_dir
@@ -27,7 +26,7 @@ class RTHN(nn.Module):
         self.embed_dim = embed_dim
         self.bert = BertModel.from_pretrained('bert-base-uncased', output_attentions=False,
                     output_hidden_states=False)
-        self.bert_proj = nn.Linear(768, self.embed_dim)
+        # self.bert_proj = nn.Linear(768, self.embed_dim)
         for param in self.bert.parameters():
             param.requires_grad = False
         self.input_dropout = nn.Dropout(input_dropout)
@@ -43,6 +42,7 @@ class RTHN(nn.Module):
 
         self.wordlinear_1 = nn.Linear(self.hidden_size * 2, self.hidden_size * 2)
         self.wordlinear_2 = nn.Linear(self.hidden_size * 2, 1, bias=False)
+        self.classlinear = nn.Linear(self.hidden_size * 2, 1)
 
         ## sentence level encoding
         self.n_layers = n_layers
@@ -77,7 +77,15 @@ class RTHN(nn.Module):
 
         ## training
         self.l2_reg = l2_reg
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+
+        # self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+
+        self.optimizer = torch.optim.Adam([{'params': self.WordEncoder.parameters()}, {'params': self.wordlinear_1.parameters()},
+                                           {'params': self.wordlinear_2.parameters()}, {'params': self.classlinear.parameters()},
+                                           {'params': self.rthn[-1].parameters()}], lr=lr)
+        self.optimizer_layer_list = list()
+        for l in range(n_layers-1):
+            self.optimizer_layer_list.append(torch.optim.Adam(self.rthn[l].parameters(), lr=lr_assist))
 
         ## model save path
         self.best_path = ''
@@ -88,7 +96,7 @@ class RTHN(nn.Module):
 
         ### word level encoder based on RNNs
         clause, _ = self.bert(input_ids.reshape(-1, self.max_seq_len), token_type_ids=None, attention_mask=attention_mask.reshape(-1, self.max_seq_len))
-        clause = self.bert_proj(clause)
+        # clause = self.bert_proj(clause)
         clause = self.input_dropout(clause).reshape(-1, self.max_seq_len, self.embed_dim)
 
         word_encode, _ = self.WordEncoder(clause)
@@ -102,6 +110,7 @@ class RTHN(nn.Module):
         alpha = torch.softmax(alpha, dim=-1)
 
         sen_encode = torch.matmul(alpha, word_encode).reshape(-1, self.max_doc_len, self.hidden_size * 2) # (batch_size, doc_len, hidden_size *2)
+        cause_class = self.classlinear(sen_encode).reshape(-1, self.max_doc_len)
         word_dis = self.posembed(word_dis) # (batch_size, doc_len, seq_len, embed_size)
         word_dis = word_dis[:, :, 0, :].reshape(-1, self.max_doc_len, self.embed_dim_pos) # (batch_size, doc_len, pos_embed_size)
         sen_encode_value = torch.cat((sen_encode, word_dis), dim=-1) # (batch_size, doc_len, hidden_size * 2 + pos_embed_size)
@@ -109,26 +118,43 @@ class RTHN(nn.Module):
         ### clause level encoder based on Transformer
         attn_mask = torch.arange(0, self.max_doc_len, step=1).to(self.device).expand(sen_encode.size()[:2]) \
                     < doc_len.reshape(-1, 1)
+        valid_num = torch.sum(doc_len).to(self.device)
+
+        pred_list, reg_list = [], []
         for l in range(self.n_layers):
-            sen_encode, pred, pred_label, reg = self.rthn[l](sen_encode_value, sen_encode_value, sen_encode, doc_len, attn_mask)
+            sen_encode, pred, pred_label, reg = self.rthn[l](sen_encode_value, sen_encode_value, sen_encode, attn_mask)
             # shape --> sen_encode: (batch_size, doc_len, hidden_size * 2)
+            pred_list.append(pred)
+            reg_list.append(reg)
             sen_encode_value = torch.cat((sen_encode, pred_label), dim=-1)
 
+
         if train:
-            valid_num = torch.sum(doc_len).to(self.device)
             loss_op = -torch.sum(output_ids * torch.log(pred)) / valid_num + reg * self.l2_reg
+            true_cause_class = output_ids == torch.LongTensor([1, 0]).to(self.device)
+            true_cause_class = true_cause_class[:, :, 0].nonzero()[:, -1]
+            sen_loss = nn.CrossEntropyLoss()(cause_class, true_cause_class.reshape(-1)) * 0.8
+            for l in range(self.n_layers-2, -1, -1):
+                loss_assist_op = torch.sum(output_ids * torch.log(pred_list[l])) / valid_num + reg_list[l] * self.l2_reg
+                loss = loss_assist_op * 0.8 + loss_op * 0.2
+                self.optimizer_layer_list[l].zero_grad()
+                loss.backward(retain_graph=True)
+                self.optimizer_layer_list[l].step()
+            loss = loss_op * 0.5 + sen_loss * 0.5
             self.optimizer.zero_grad()
-            loss_op.backward(retain_graph=True)
+            loss.backward()
             self.optimizer.step()
 
-        true_y_op = torch.argmax(output_ids, -1).cpu().reshape(-1, )
-        pred_y_op = torch.argmax(pred, -1).cpu().reshape(-1, )
         score_mask = torch.arange(0, self.max_doc_len, step=1).repeat(len(doc_len), 1) < doc_len.reshape(-1, 1).cpu()
+        true_y_op = torch.argmax(output_ids, -1).cpu().reshape(-1, ) * score_mask.reshape(-1, ).long()
+        pred_y_op = torch.argmax(pred, -1).cpu().reshape(-1, )
 
         accuracy = accuracy_score(true_y_op, pred_y_op, sample_weight=score_mask.reshape(-1, ))
         precision = precision_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         recall = recall_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         F1 = f1_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
+        print(loss, accuracy, precision, recall, F1)
+
 
         return accuracy, precision, recall, F1
 
@@ -136,12 +162,14 @@ class RTHN(nn.Module):
 
         state = {
             'iter': iter,
-            'bert_proj_state_dict': self.bert_proj.state_dict(),
+            # 'bert_proj_state_dict': self.bert_proj.state_dict(),
             'WordEncoder_state_dict': self.WordEncoder.state_dict(),
             'wordlinear_1_state_dict': self.wordlinear_1.state_dict(),
             'wordlinear_2_state_dict': self.wordlinear_2.state_dict(),
+            'classlinear_state_dict': self.classlinear.state_dict(),
             'rthn_state_dict': self.rthn.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'optimizer_list_state_dict': [self.optimizer_layer_list[l].state_dict() for l in range(self.n_layers-1)]
         }
         model_save_path = os.path.join(self.model_dir,
                                        'model_{}_{:.4f}_{:.4f}_{:.4f}'.format(iter, precision, recall, F1))

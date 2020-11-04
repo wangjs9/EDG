@@ -539,7 +539,7 @@ class Transformer_ECE(nn.Module):
                                filter_size=config.filter)
 
         self.decoder_key = nn.Linear(config.hidden_dim, decoder_number, bias=False)
-        self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 1, bias=False)
+        self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 2, bias=False)
         self.generator = Generator(config.hidden_dim, self.vocab_size)
 
         if config.weight_sharing:
@@ -640,6 +640,7 @@ class Transformer_ECE(nn.Module):
             q_h = encoder_outputs[:, 0]  # the first token of the sentence CLS, shape: (batch_size, 1, hidden_size)
             logit_prob = self.decoder_key(q_h).to(self.device)  # (batch_size, 1, decoder_num)
             loss += nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda())
+
             loss_bce_program = nn.CrossEntropyLoss()(logit_prob, torch.LongTensor(batch['program_label']).cuda()).item()
             pred_program = np.argmax(logit_prob.detach().cpu().numpy(), axis=1)
             program_acc = accuracy_score(batch["program_label"], pred_program)
@@ -658,11 +659,12 @@ class Transformer_ECE(nn.Module):
             curcause_attn = torch.matmul(cause_weights, pre_logit.repeat(clause_num, 1, 1)).squeeze(-1).to(self.device)
             curcause = torch.cat((curcause_embed, curcause_attn), dim=-1)
             curcause_pred = torch.sigmoid(self.cause_evaluator(torch.mean(curcause, dim=-2, keepdim=False)))
-            # curcause_pred = curcause_pred[:, 0]
-            loss += nn.CrossEntropyLoss()(curcause_pred, torch.argmax(curcause_prob, dim=-1))
-            loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, torch.argmax(curcause_prob, dim=-1)).item()
+
+            curcause_label = (curcause_prob < 0.5).long().reshape(-1,)
+            loss += nn.CrossEntropyLoss()(curcause_pred, curcause_label)
+            loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, curcause_label).item()
             pred_cause = np.argmax(curcause_pred.detach().cpu().numpy(), axis=-1)
-            cause_acc = accuracy_score(np.argmax(curcause_prob.detach().cpu().numpy(), axis=-1), pred_cause)
+            cause_acc = accuracy_score(curcause_label.detach().cpu().numpy(), pred_cause)
 
         if (config.label_smoothing):
             loss_ppl = self.criterion_ppl(logit.contiguous().view(-1, logit.size(-1)),
