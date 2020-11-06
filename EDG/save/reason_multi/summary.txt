@@ -1,0 +1,2 @@
+EVAL	Loss	PPL	Accuracy	Bleu_g	Bleu_b
+test	6.7253	833.1808	0.0877	0.95	1.63

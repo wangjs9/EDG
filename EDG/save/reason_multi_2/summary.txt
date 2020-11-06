@@ -1,0 +1,3 @@
+EVAL	Loss	PPL	Accuracy	Bleu_g	Bleu_b
+EVAL	Loss	PPL	Accuracy_emo	Accuracy_cause	Bleu_g	Bleu_b
+test	6.6533	775.3382	0.0900	1.0000	1.25	1.50

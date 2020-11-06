@@ -1,4 +1,6 @@
-python main.py --model trs --label_smoothing --noam --emo_multitask --caz_multitask --emb_dim 300 --hidden_dim 300 --hop 2 --heads 2 --cuda --pretrain_emb --save_path save/trs/
+python main.py --model trs --label_smoothing --noam --emo_multitask --emb_dim 300 --hidden_dim 300 --hop 2 --heads 2 --cuda --pretrain_emb --save_path save/trs/
+
+python main.py --model trs --label_smoothing --noam --emo_multitask --caz_multitask --emb_dim 300 --hidden_dim 300 --hop 2 --heads 2 --cuda --pretrain_emb --save_path save/trs_multi/
 
 python main.py --model reason --label_smoothing --noam --emo_multitask --caz_multitask --emb_dim 300 --hidden_dim 300 --hop 2 --heads 2 --cuda --pretrain_emb --save_path save/reason_multi/
 
