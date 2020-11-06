@@ -1,9 +1,9 @@
 from utils.data_loader import prepare_data_seq
 from utils import config
 from model.transformer import Transformer
-from model.transformer_multidec import Transformer_multidec
-from model.transformer_reason import Transformer_ECE, Transformer_CVAE
-from model.transformer_multihop import Transformer_multihop
+from model.trs_multi_decoder import Transformer_multidec
+from model.trs_reason import Transformer_ECE, Transformer_CVAE
+from model.trs_multihop import Transformer_multihop
 from model.common_layer import evaluate, count_parameters, make_infinite
 import torch
 from torch.nn.init import xavier_uniform_

@@ -153,8 +153,9 @@ class RTHN(nn.Module):
         precision = precision_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         recall = recall_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         F1 = f1_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
-        print(loss, accuracy, precision, recall, F1)
 
+        if train:
+            print(loss, accuracy, precision, recall, F1)
 
         return accuracy, precision, recall, F1
 

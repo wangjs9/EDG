@@ -255,6 +255,8 @@ class Transformer(nn.Module):
                                filter_size=config.filter)
 
         self.decoder_key = nn.Linear(config.hidden_dim, decoder_number, bias=False)
+        if config.caz_multitask:
+            self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 2, bias=False)
         self.generator = Generator(config.hidden_dim, self.vocab_size)
 
         if config.weight_sharing:
@@ -289,17 +291,29 @@ class Transformer(nn.Module):
         self.best_path = ""
 
     def save_model(self, running_avg_ppl, iter, f1_g, f1_b, ent_g, ent_b):
-
-        state = {
-            'iter': iter,
-            'encoder_state_dict': self.encoder.state_dict(),
-            'decoder_state_dict': self.decoder.state_dict(),
-            'generator_dict': self.generator.state_dict(),
-            'decoder_key_state_dict': self.decoder_key.state_dict(),
-            'embedding_dict': self.embedding.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'current_loss': running_avg_ppl
-        }
+        if config.caz_multitask:
+            state = {
+                'iter': iter,
+                'encoder_state_dict': self.encoder.state_dict(),
+                'decoder_state_dict': self.decoder.state_dict(),
+                'generator_dict': self.generator.state_dict(),
+                'decoder_key_state_dict': self.decoder_key.state_dict(),
+                'cause_evaluator_state_dict': self.cause_evaluator.state_dict(),
+                'embedding_dict': self.embedding.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'current_loss': running_avg_ppl
+            }
+        else:
+            state = {
+                'iter': iter,
+                'encoder_state_dict': self.encoder.state_dict(),
+                'decoder_state_dict': self.decoder.state_dict(),
+                'generator_dict': self.generator.state_dict(),
+                'decoder_key_state_dict': self.decoder_key.state_dict(),
+                'embedding_dict': self.embedding.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'current_loss': running_avg_ppl
+            }
         model_save_path = os.path.join(self.model_dir,
                                        'model_{}_{:.4f}_{:.4f}_{:.4f}_{:.4f}_{:.4f}'.format(iter, running_avg_ppl, f1_g,
                                                                                             f1_b, ent_g, ent_b))
@@ -309,7 +323,7 @@ class Transformer(nn.Module):
     def train_one_batch(self, batch, iter, train=True):
         enc_batch, _, _, _, _, \
         _, _, _, \
-        _, _, \
+        curcause_clause, curcause_prob, \
         enc_batch_extend_vocab, extra_zeros, _, _ = get_input_from_batch(batch)
         dec_batch, _, _, _, _ = get_output_from_batch(batch)
 
@@ -350,6 +364,27 @@ class Transformer(nn.Module):
             pred_program = np.argmax(logit_prob.detach().cpu().numpy(), axis=1)
             program_acc = accuracy_score(batch["program_label"], pred_program)
 
+        if config.caz_multitask:
+            # add the loss function of cause prediction
+            batch_size = curcause_clause.size(0)
+            clause_num = curcause_clause.size(1)
+            curcause_clause = curcause_clause.reshape(batch_size * clause_num, -1).to(self.device)
+            curcause_prob = curcause_prob.reshape(batch_size * clause_num, -1).to(self.device)
+            ### mask_curcause = curcause_clause.data.eq(config.PAD_idx).to(self.device) # (batch_size * num_clause, num_seq)
+            curcause_embed = self.embedding(curcause_clause)  # (batch_size*num_clause, num_seq, hid_dim)
+            # do an attention action with curcause and pre_logit
+            cause_weights = nn.functional.softmax(
+                torch.matmul(curcause_embed, pre_logit.repeat(clause_num, 1, 1).permute(0, 2, 1)), dim=-1)
+            curcause_attn = torch.matmul(cause_weights, pre_logit.repeat(clause_num, 1, 1)).squeeze(-1).to(self.device)
+            curcause = torch.cat((curcause_embed, curcause_attn), dim=-1)
+            curcause_pred = torch.sigmoid(self.cause_evaluator(torch.mean(curcause, dim=-2, keepdim=False)))
+
+            curcause_label = (curcause_prob < 0.5).long().reshape(-1, )
+            loss += nn.CrossEntropyLoss()(curcause_pred, curcause_label)
+            loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, curcause_label).item()
+            pred_cause = np.argmax(curcause_pred.detach().cpu().numpy(), axis=-1)
+            cause_acc = accuracy_score(curcause_label.detach().cpu().numpy(), pred_cause)
+
         if (config.label_smoothing):
             loss_ppl = self.criterion_ppl(logit.contiguous().view(-1, logit.size(-1)),
                                           dec_batch.contiguous().view(-1)).item()
@@ -359,14 +394,9 @@ class Transformer(nn.Module):
             self.optimizer.step()
         # if config.emo_multitask:
         if (config.label_smoothing):
-            return loss_ppl, math.exp(min(loss_ppl, 100)), loss_bce_program, program_acc
+            return loss_ppl, math.exp(min(loss_ppl, 100)), (loss_bce_program, loss_bce_caz), (program_acc, cause_acc)
         else:
-            return loss.item(), math.exp(min(loss.item(), 100)), loss_bce_program, program_acc
-        # else:
-        #     if (config.label_smoothing):
-        #         return loss_ppl, math.exp(min(loss_ppl, 100)), 0, 0
-        #     else:
-        #         return loss.item(), math.exp(min(loss.item(), 100)), 0, 0
+            return loss.item(), math.exp(min(loss.item(), 100)), (loss_bce_program, loss_bce_caz), (program_acc, cause_acc)
 
     def compute_act_loss(self, module):
         R_t = module.remainders
