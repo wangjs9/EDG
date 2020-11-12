@@ -6,8 +6,6 @@ from data_loader import DataIter
 from RTHN import RTHN
 from tensorboardX import SummaryWriter
 
-sys.path.append("..")
-
 def find_model_path(save_path):
     list = os.listdir(save_path)
     list = [ele for ele in list if ele[:5] == 'model']
@@ -17,6 +15,7 @@ def find_model_path(save_path):
     # model_path = datetime.datetime.fromtimestamp(os.path.getmtime(save_path+list[-1]))
     model_path = os.path.join(save_path, list[-1])
     return model_path
+
 
 def run():
     if config.log_file_name:
@@ -46,13 +45,48 @@ def run():
 
     try:
         model = model.train()
-        check_iter = 500
+        check_iter = 100
+
+        for l in range(1, config.n_layers):
+            print('********** Layer {} **********'.format(l))
+            f1_first = True
+            for n_iter in range(2000):
+                # if n_iter < 100:
+                #     f1_first = True
+                # else:
+                #     f1_first = False
+                accuracy_train, precision_train, recall_train, F1_train = model(*next(train_DataIter), layer_num=l, f1_first=f1_first)
+
+                # if recall_train > 0.8:
+                #     f1_first = False
+                # else:
+                #     f1_first = True
+
+                if (n_iter + 1) % check_iter == 0:
+                    print("Layer {}, iter {}: accuracy:{:.2f} precision:{:.2f} recall:{:.2f} F1:{:.2f}".format(
+                        l, n_iter, accuracy_train, precision_train, recall_train, F1_train))
+                    model = model.eval()
+                    accuracy, precision, recall, F1 = model(*next(train_DataIter), layer_num=l,
+                                                            train=False)
+                    model = model.train()
+                    print("EVAL: accuracy:{:.2f} precision:{:.2f} recall:{:.2f} F1:{:.2f}".format(accuracy, precision, recall,
+                                                                                            F1))
+
+
         best_accuracy, best_precision, best_recall, best_F1 = 0, 0, 0, 0
         patient = 0
         writer = SummaryWriter(log_dir=config.save_path)
-        for n_iter in tqdm(range(10000)):
-            print(n_iter)
-            accuracy_train, precision_train, recall_train, F1_train = model(*next(train_DataIter))
+
+        f1_first = True
+        for n_iter in tqdm(range(4000)):
+            # if n_iter > 2500:
+            #     f1_first = False
+            # accuracy_train, precision_train, recall_train, F1_train = model(*next(train_DataIter), layer_num=config.n_layers)
+            accuracy_train, precision_train, recall_train, F1_train = model(*next(train_DataIter), layer_num=config.n_layers, f1_first=f1_first)
+            if recall_train > 0.8 and n_iter > 2500:
+                f1_first = False
+            else:
+                f1_first = True
 
             writer.add_scalars('accuracy', {'accuracy_train': accuracy_train}, n_iter)
             writer.add_scalars('precision', {'precision_train': precision_train}, n_iter)
@@ -61,25 +95,24 @@ def run():
             # writer.add_scalars('lr', {'learning_rata': model.optimizer._rate}, n_iter)
             if (n_iter + 1) % check_iter == 0:
                 model = model.eval()
-                accuracy, precision, recall, F1 = model(*next(train_DataIter), train=False)
+                accuracy, precision, recall, F1 = model(*next(train_DataIter), layer_num=config.n_layers, train=False)
                 writer.add_scalars('accuracy', {'accuracy_train': accuracy}, n_iter)
                 writer.add_scalars('precision', {'precision_train': precision}, n_iter)
                 writer.add_scalars('recall', {'recall_train': recall}, n_iter)
                 writer.add_scalars('F1', {'F1_train': F1}, n_iter)
                 model = model.train()
 
-                if n_iter < 1300:
-                    continue
-                if F1 >= best_F1:
+                if F1 > best_F1:
                     best_F1 = F1
                     patient = 0
                     model.save_model(n_iter, precision, recall, F1)
-                else:
+                elif n_iter > 900:
                     patient += 1
-                if patient > 5:
+
+                if patient > 10:
                     break
 
-                print("accuracy:{:.2f} precision:{:.2f} recall:{:.2f} F1:{:.2f}".format(accuracy, precision, recall, F1))
+                print("EVAL: accuracy:{:.2f} precision:{:.2f} recall:{:.2f} F1:{:.2f}".format(accuracy, precision, recall, F1))
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from training early')
@@ -89,9 +122,12 @@ def run():
 
 def main():
     accuracy, precision, recall, F1 = run()
-    print(" socres:")
-    print(accuracy, precision, recall, F1)
+    print('     Scores:')
+    print('     accuracy {}, precision {}, recall {}, F1 {}'.format(
+        accuracy, precision, recall, F1
+    ))
 
 
 if __name__ == '__main__':
     main()
+

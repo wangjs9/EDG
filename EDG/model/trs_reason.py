@@ -539,7 +539,7 @@ class Transformer_ECE(nn.Module):
                                filter_size=config.filter)
 
         self.decoder_key = nn.Linear(config.hidden_dim, decoder_number, bias=False)
-        self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 2, bias=False)
+        self.cause_evaluator = nn.Linear(config.hidden_dim * 2, 1, bias=False)
         self.generator = Generator(config.hidden_dim, self.vocab_size)
 
         if config.weight_sharing:
@@ -658,11 +658,16 @@ class Transformer_ECE(nn.Module):
                 torch.matmul(curcause_embed, pre_logit.repeat(clause_num, 1, 1).permute(0, 2, 1)), dim=-1)
             curcause_attn = torch.matmul(cause_weights, pre_logit.repeat(clause_num, 1, 1)).squeeze(-1).to(self.device)
             curcause = torch.cat((curcause_embed, curcause_attn), dim=-1)
+            # curcause_pred = torch.sigmoid(self.cause_evaluator(curcause))
             curcause_pred = torch.sigmoid(self.cause_evaluator(torch.mean(curcause, dim=-2, keepdim=False)))
 
             curcause_label = (curcause_prob < 0.5).long().reshape(-1,)
-            loss += nn.CrossEntropyLoss()(curcause_pred, curcause_label)
-            loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, curcause_label).item()
+            # loss += nn.CrossEntropyLoss()(curcause_pred, curcause_label)
+            # loss_bce_caz = nn.CrossEntropyLoss()(curcause_pred, curcause_label).item()
+
+            loss += nn.MSELoss()(curcause_prob, curcause_pred).item() * 5
+            # loss += nn.CrossEntropyLoss()(curcause_pred, curcause_label)
+            loss_bce_caz = nn.MSELoss()(curcause_prob, curcause_pred).item()
             pred_cause = np.argmax(curcause_pred.detach().cpu().numpy(), axis=-1)
             cause_acc = accuracy_score(curcause_label.detach().cpu().numpy(), pred_cause)
 

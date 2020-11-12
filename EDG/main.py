@@ -161,7 +161,6 @@ def train_eval(test=False):
 
         file_summary = config.save_path + "summary.txt"
         with open(file_summary, 'w') as the_file:
-            the_file.write("EVAL\tLoss\tPPL\tAccuracy\tBleu_g\tBleu_b\n")
             if type(acc_test) == tuple:
                 the_file.write("EVAL\tLoss\tPPL\tAccuracy_emo\tAccuracy_cause\tBleu_g\tBleu_b\n")
                 the_file.write(

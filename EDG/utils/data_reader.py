@@ -204,7 +204,7 @@ def read_langs(vocab):
     return data_train, data_dev, data_test, vocab
 
 def load_dataset():
-    if (os.path.exists('empathetic-dialogue/dataset_preproc.p')):
+    if os.path.exists('empathetic-dialogue/dataset_preproc.p'):
     # if (os.path.exists('empathetic-dialogue/min_dataset_preproc.p')):
         print("LOADING empathetic_dialogue")
         with open('empathetic-dialogue/dataset_preproc.p', "rb") as f:

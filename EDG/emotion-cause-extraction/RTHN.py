@@ -78,20 +78,15 @@ class RTHN(nn.Module):
         ## training
         self.l2_reg = l2_reg
 
-        # self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-
-        self.optimizer = torch.optim.Adam([{'params': self.WordEncoder.parameters()}, {'params': self.wordlinear_1.parameters()},
-                                           {'params': self.wordlinear_2.parameters()}, {'params': self.classlinear.parameters()},
-                                           {'params': self.rthn[-1].parameters()}], lr=lr)
-        self.optimizer_layer_list = list()
-        for l in range(n_layers-1):
-            self.optimizer_layer_list.append(torch.optim.Adam(self.rthn[l].parameters(), lr=lr_assist))
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer_assist = torch.optim.Adam(self.parameters(), lr=lr_assist)
 
         ## model save path
         self.best_path = ''
 
-    def forward(self, input_ids, attention_mask, output_ids, sen_len, doc_len, word_dis, emotion, train=True):
-
+    def forward(self, input_ids, attention_mask, output_ids, sen_len, doc_len, word_dis, emotion, layer_num=1, train=True, f1_first=False):
+        if layer_num < 1:
+            raise ValueError('  layer_num must equal or greater than 1.')
         self.device = input_ids.device
 
         ### word level encoder based on RNNs
@@ -110,7 +105,7 @@ class RTHN(nn.Module):
         alpha = torch.softmax(alpha, dim=-1)
 
         sen_encode = torch.matmul(alpha, word_encode).reshape(-1, self.max_doc_len, self.hidden_size * 2) # (batch_size, doc_len, hidden_size *2)
-        cause_class = self.classlinear(sen_encode).reshape(-1, self.max_doc_len)
+        sen_class = self.classlinear(sen_encode).reshape(-1, self.max_doc_len)
         word_dis = self.posembed(word_dis) # (batch_size, doc_len, seq_len, embed_size)
         word_dis = word_dis[:, :, 0, :].reshape(-1, self.max_doc_len, self.embed_dim_pos) # (batch_size, doc_len, pos_embed_size)
         sen_encode_value = torch.cat((sen_encode, word_dis), dim=-1) # (batch_size, doc_len, hidden_size * 2 + pos_embed_size)
@@ -118,32 +113,42 @@ class RTHN(nn.Module):
         ### clause level encoder based on Transformer
         attn_mask = torch.arange(0, self.max_doc_len, step=1).to(self.device).expand(sen_encode.size()[:2]) \
                     < doc_len.reshape(-1, 1)
-        valid_num = torch.sum(doc_len).to(self.device)
 
-        pred_list, reg_list = [], []
-        for l in range(self.n_layers):
+
+        for l in range(layer_num):
             sen_encode, pred, pred_label, reg = self.rthn[l](sen_encode_value, sen_encode_value, sen_encode, attn_mask)
             # shape --> sen_encode: (batch_size, doc_len, hidden_size * 2)
-            pred_list.append(pred)
-            reg_list.append(reg)
             sen_encode_value = torch.cat((sen_encode, pred_label), dim=-1)
 
 
+        # if f1_first:
+        #     loss = - torch.sum(output_ids[:, :, 0].unsqueeze(-1) * torch.log(pred)).to(
+        #         self.device) / pos_num + reg * self.l2_reg
+        # else:
+        #     loss = - torch.sum(output_ids[:, :, 0].unsqueeze(-1) * torch.log(pred)).to(
+        #     self.device) / pos_num + reg * self.l2_reg - torch.sum(output_ids * torch.log(pred)) / valid_num
+        pos_num = torch.sum(output_ids[:, :, 0]).to(self.device)
+        valid_num = torch.sum(doc_len).to(self.device)
+        true_cause_class = output_ids == torch.LongTensor([1, 0]).to(self.device)
+        true_cause_class = true_cause_class[:, :, 0].nonzero()[:, -1]
+        loss = nn.CrossEntropyLoss()(sen_class, true_cause_class.reshape(-1))
+        if f1_first:
+
+            pos_num = torch.sum(output_ids[:, :, 0]).to(self.device)
+            loss = loss - torch.sum(output_ids[:, :, 0].unsqueeze(-1) * torch.log(pred)).to(self.device) / pos_num + reg * self.l2_reg
+        else:
+            valid_num = torch.sum(doc_len).to(self.device)
+            loss = loss - torch.sum(output_ids * torch.log(pred)) / valid_num + reg * self.l2_reg
+
         if train:
-            loss_op = -torch.sum(output_ids * torch.log(pred)) / valid_num + reg * self.l2_reg
-            true_cause_class = output_ids == torch.LongTensor([1, 0]).to(self.device)
-            true_cause_class = true_cause_class[:, :, 0].nonzero()[:, -1]
-            sen_loss = nn.CrossEntropyLoss()(cause_class, true_cause_class.reshape(-1)) * 0.8
-            for l in range(self.n_layers-2, -1, -1):
-                loss_assist_op = torch.sum(output_ids * torch.log(pred_list[l])) / valid_num + reg_list[l] * self.l2_reg
-                loss = loss_assist_op * 0.8 + loss_op * 0.2
-                self.optimizer_layer_list[l].zero_grad()
-                loss.backward(retain_graph=True)
-                self.optimizer_layer_list[l].step()
-            loss = loss_op * 0.5 + sen_loss * 0.5
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            if layer_num == 1:
+                self.optimizer_assist.zero_grad()
+                loss.backward()
+                self.optimizer_assist.step()
+            else:
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
         score_mask = torch.arange(0, self.max_doc_len, step=1).repeat(len(doc_len), 1) < doc_len.reshape(-1, 1).cpu()
         true_y_op = torch.argmax(output_ids, -1).cpu().reshape(-1, ) * score_mask.reshape(-1, ).long()
@@ -153,9 +158,6 @@ class RTHN(nn.Module):
         precision = precision_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         recall = recall_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
         F1 = f1_score(true_y_op, pred_y_op, pos_label=0, sample_weight=score_mask.reshape(-1, ))
-
-        if train:
-            print(loss, accuracy, precision, recall, F1)
 
         return accuracy, precision, recall, F1
 
@@ -170,7 +172,8 @@ class RTHN(nn.Module):
             'classlinear_state_dict': self.classlinear.state_dict(),
             'rthn_state_dict': self.rthn.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'optimizer_list_state_dict': [self.optimizer_layer_list[l].state_dict() for l in range(self.n_layers-1)]
+            'optimizer_assist_dict': self.optimizer_assist.state_dict(),
+            # 'optimizer_list_state_dict': [self.optimizer_layer_list[l].state_dict() for l in range(self.n_layers-1)]
         }
         model_save_path = os.path.join(self.model_dir,
                                        'model_{}_{:.4f}_{:.4f}_{:.4f}'.format(iter, precision, recall, F1))

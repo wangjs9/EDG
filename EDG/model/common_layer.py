@@ -416,7 +416,7 @@ class RTHNLayer(nn.Module):
         matrix = (1 - torch.eye(self.max_doc_len).to(self.device)).unsqueeze(0) + pred_zeros
 
         y, _ = self.multi_head_attention(queries, keys, values, attn_mask.unsqueeze(1)) # (batch_size, doc_len, input_depth)
-        pred = self.class_lt(self.layer_dropout(y.reshape(-1, self.output_depth).to(self.device)))  # (batch_size, doc_len, class)
+        pred = self.class_lt(self.layer_dropout(F.tanh(y).reshape(-1, self.output_depth).to(self.device)))  # (batch_size, doc_len, class)
 
         pred = torch.softmax(pred * attn_mask.reshape(-1, 1).float(), dim=-1).\
             reshape(-1, self.max_doc_len, self.program_class)  # (batch_size, doc_len, class)
