@@ -15,7 +15,7 @@ def run(config):
         if config.glove:
             model = EKCLF(config)
         else:
-            model = EKCLF(config)
+            model = EKBertCLF(config)
     if torch.cuda.is_available():
         model.cuda()
 
@@ -28,13 +28,13 @@ def run(config):
         loader = make_infinite(data_tra)
         for n_iter in tqdm(range(config.train_iter)):
             loss, scores = model(next(loader))
+
             accuracy, precision, recall, f1 = scores
             writer.add_scalars('loss', {'loss_train': loss}, n_iter)
             writer.add_scalars('accuracy', {'accuracy_train': accuracy}, n_iter)
             writer.add_scalars('precision', {'precision_train': precision}, n_iter)
             writer.add_scalars('recall', {'recall_train': recall}, n_iter)
             writer.add_scalars('f1', {'f1_train': f1}, n_iter)
-            print('gobal step {} loss {:2f} accuracy {:2f} f1 {:2f}'.format(n_iter, loss, accuracy, f1))
             if (n_iter + 1) % check_iter == 0:
                 model = model.eval()
                 acc_val, pre_val, recall_val, f1_val, _ = evaluate(model, data_val, ty="valid")
@@ -43,7 +43,7 @@ def run(config):
                 writer.add_scalars('recall', {'recall_val': recall_val}, n_iter)
                 writer.add_scalars('f1', {'f1_train': f1}, n_iter)
                 model = model.train()
-                if n_iter < 500:
+                if n_iter < 700:
                     continue
                 if best_f1 < f1_val:
                     best_f1 = f1_val

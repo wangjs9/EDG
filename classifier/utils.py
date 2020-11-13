@@ -15,8 +15,7 @@ torch.backends.cudnn.benchmark = False
 
 UNK_idx = 0
 PAD_idx = 1
-EOS_idx = 2
-SOS_idx = 3
+SOS_idx = 2
 
 def get_vocab_from_bert():
     tokenizer.save_vocabulary('./vocab.txt')
@@ -81,14 +80,15 @@ class Dataset(data.Dataset):
 
     def preprocess(self, sequence):
         if self.glove:
-            word2index = pickle.load(open('./vocab.txt', 'r'))
-            input_ids = [SOS_idx] + [word2index[w] for w in sequence] + [EOS_idx]
+            word2index = pickle.load(open('./data/vocab.txt', 'rb'))
+            input_ids = [SOS_idx] + [word2index[w] if w in word2index.keys() else UNK_idx for w in sequence]
             mask = [1 for i in range(len(input_ids))]
             while len(input_ids) < 50:
                 input_ids.append(PAD_idx)
                 mask.append(0)
             if len(input_ids) > 50:
-                input_ids = input_ids[:49] + [EOS_idx]
+                input_ids = input_ids[:50]
+                mask = mask[:50]
 
             return input_ids, mask
 
@@ -118,6 +118,7 @@ class EKDataset(Dataset):
             'sentimental': 26, 'caring': 27, 'trusting': 28, 'ashamed': 29, 'apprehensive': 30, 'faithful': 31}
         self.info = get_info_from_external_knowledge()
         self.embeddings, self.primary_emotions, self.second_emotions, self.similar_words, self.polarity = self.info
+
         # self.wordlist = sorted(self.embeddings.keys(), key=lambda x: len(x.split()), reverse=True)
         self.wordlist = self.embeddings.keys()
         wordkeys4 = '|'.join([' '+re.escape(word)+' ' for word in self.wordlist if len(word.split()) == 4])
@@ -138,31 +139,32 @@ class EKDataset(Dataset):
 
     def preprocess(self, sequence):
         if self.glove:
-            word2index = pickle.load(open('./vocab.txt', 'r'))
-            input_ids = [SOS_idx] + [word2index[w] for w in sequence] + [EOS_idx]
+            word2index = pickle.load(open('./data/vocab.txt', 'rb'))
+            input_ids = [SOS_idx] + [word2index[w] if w in word2index.keys() else UNK_idx for w in sequence]
             mask = [1 for i in range(len(input_ids))]
             while len(input_ids) < 50:
                 input_ids.append(PAD_idx)
                 mask.append(0)
             if len(input_ids) > 50:
-                input_ids = input_ids[:49] + [EOS_idx]
+                input_ids = input_ids[:50]
+                mask = mask[:50]
 
-            wordLevel = []
+            wordLevel = [[0, 0, 0, 0, 0]]
             occurance = list()
             sequence = ' '.join([' '] + sequence + [' '])
             for i in range(4):
                 res = re.findall(self.keys[i], sequence)
                 if res != []:
                     for w in res:
-                        word = w.strip().replace(' ', '_')
-                        sequence = sequence.replace(w.strip(), word)
+                        word = w[1:-1].replace(' ', '_')
+                        sequence = sequence.replace(w[1:-1], word)
                         occurance.append(word)
 
             pos, neg, positive, negative = [], [], [], []
 
             for word in sequence.split():
                 if word in occurance:
-                    w = word.replace('_', ' ').split()
+                    w = word.replace('_', ' ')
                     for i in range(len(w)):
                         wordLevel.append(self.embeddings[w] + [self.polarity[w]])
                     if self.polarity[w] > 0:
@@ -171,9 +173,13 @@ class EKDataset(Dataset):
                         neg.append(self.polarity[w])
                 else:
                     wordLevel.append([0 for i in range(5)])
+            while len(wordLevel) < 50:
+                wordLevel.append([0, 0, 0, 0, 0])
+            if len(wordLevel) > 50:
+                wordLevel = wordLevel[:50]
 
-            pos = np.mean(pos)
-            neg = np.mean(neg)
+            pos = 0 if pos == [] else np.mean(pos)
+            neg = 0 if neg == [] else np.mean(neg)
 
             return input_ids, mask, [pos, neg], wordLevel
 
@@ -188,15 +194,14 @@ class EKDataset(Dataset):
                 res = re.findall(self.keys[i], sequence)
                 if res != []:
                     for w in res:
-                        word = w.strip().replace(' ', '_')
-                        sequence = sequence.replace(w.strip(), word)
+                        word = w[1:-1].replace(' ', '_')
+                        sequence = sequence.replace(w[1:-1], word)
                         occurance.append(word)
 
             pos, neg, positive, negative = [], [], [], []
-
             for word in sequence.split():
                 if word in occurance:
-                    w = word.replace('_', ' ').split()
+                    w = word.replace('_', ' ')
                     if self.polarity[w] > 0:
                         pos.append(self.polarity[w])
                         positive.append(self.embeddings[w])
@@ -204,10 +209,10 @@ class EKDataset(Dataset):
                         neg.append(self.polarity[w])
                         negative.append(self.embeddings[w])
 
-            positive = np.mean(positive, axis=0)
-            negative = np.mean(negative, axis=0)
-            pos = np.mean(pos)
-            neg = np.mean(neg)
+            positive = np.mean(positive, axis=0).tolist() if pos != [] else [0, 0, 0, 0]
+            negative = np.mean(negative, axis=0).tolist() if neg != [] else [0, 0, 0, 0]
+            pos = np.mean(pos) if pos != 0 else 0
+            neg = np.mean(neg) if neg != 0 else 0
 
             return tokenizer_info['input_ids'], tokenizer_info['attention_mask'], [pos, neg], [positive, negative]
 
@@ -283,7 +288,7 @@ def process_raw(dataframe, config):
     data_dev = {'label': [], 'sequence': []}
     total_len = len(dataframe)
     print('There are {} training examples'.format(int(total_len * 0.9)))
-    vocab = Lang({UNK_idx: "UNK", PAD_idx: "PAD", EOS_idx: "EOS", SOS_idx: "SOS"})
+    vocab = Lang({UNK_idx: "UNK", PAD_idx: "PAD", SOS_idx: "SOS"})
     for idx, row in dataframe.iterrows():
         emotion, text = row
         if idx < total_len * 0.9:
@@ -311,17 +316,19 @@ def make_infinite(dataloader):
 
 
 def gen_embeddings(vocab, config):
+    embeddings = np.random.randn(vocab.n_words, config.emb_dim) * 0.01
+    print('Embeddings: %d x %d' % (vocab.n_words, config.emb_dim))
+    pre_trained = 0
     for line in tqdm(open(config.emb_file, 'r', encoding='UTF8').readlines()):
-
-        embeddings = np.random.randn(vocab.n_words, config.emb_dim) * 0.01
         word2index = vocab.word2index
         sp = line.split()
         if len(sp) == config.emb_dim + 1:
             if sp[0] in vocab.word2index:
                 embeddings[vocab.word2index[sp[0]]] = [float(x) for x in sp[1:]]
-
-    np.save(config.emb_path, embeddings)
-    pickle.dump(word2index, open(config.vocab_path, 'w', encoding='UTF8'))
+                pre_trained += 1
+    print('Pre-trained: %d (%.2f%%)' % (pre_trained, pre_trained * 100.0 / vocab.n_words))
+    pickle.dump(embeddings, open(config.emb_path, 'wb'))
+    pickle.dump(word2index, open(config.vocab_path, 'wb'))
 
 
 def collate_fn(data):
@@ -402,8 +409,6 @@ def prepare_data_seq(config):
 
     if config.external_knowledge:
         dataset_train = EKDataset(data_tra, config)
-        print(dataset_train[0])
-        exit()
         data_loader_tra = torch.utils.data.DataLoader(dataset=dataset_train,
                                       batch_size=batch_size,
                                       shuffle=True, collate_fn=ek_collate_fn)
